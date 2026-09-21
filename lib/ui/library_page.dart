@@ -3,29 +3,15 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:hongguo_dart/hongguo_dart.dart';
 
+import '../data/catalog_pager.dart';
 import '../data/database.dart';
+import '../data/library_tabs.dart';
 import '../data/providers.dart';
 import 'cover_prefetch.dart';
 import 'player_page.dart';
 import 'theme.dart';
 import 'widgets/drama_card.dart';
 import 'widgets/pressable.dart';
-
-/// 一级标签。`genreKey` 为 null 表示「综合」——走推荐接口，而不是分类接口。
-class LibraryTab {
-  const LibraryTab({required this.label, this.genreKey, this.scene});
-
-  final String label;
-  final String? genreKey;
-  final String? scene;
-}
-
-const List<LibraryTab> libraryTabs = <LibraryTab>[
-  LibraryTab(label: '综合'),
-  LibraryTab(label: '真人剧', genreKey: 'short_play', scene: 'default'),
-  LibraryTab(label: '漫剧', genreKey: 'comic_series', scene: 'comic_series'),
-  LibraryTab(label: 'AI剧', genreKey: 'ai_series', scene: 'ai_series'),
-];
 
 /// 题材快捷词。
 ///
@@ -44,15 +30,26 @@ const List<String> libraryTopics = <String>[
   '年代',
 ];
 
-/// 一个标签下的信息流：首屏、分页、错误。
+/// 一个标签下的信息流：**本地快照优先，网络跟上**。
 ///
 /// 用 `ChangeNotifier` 而不是 Riverpod 的 family notifier：分页状态只属于这一个页面，
 /// 没必要进全局容器；收藏、历史那些要跨页共享的才放 provider。
 class LibraryFeed extends ChangeNotifier {
-  LibraryFeed({required this.client, required this.tab});
+  LibraryFeed({
+    required this.client,
+    required this.database,
+    required this.tab,
+    required this.tabIndex,
+  }) : _pager = CatalogPager(client: client, tab: tab);
 
   final HongguoClient client;
+  final AppDatabase database;
   final LibraryTab tab;
+
+  /// 标签下标。剧库快照按它取（`library_entries.tab`）。
+  final int tabIndex;
+
+  CatalogPager _pager;
 
   final List<Drama> dramas = <Drama>[];
 
@@ -61,62 +58,49 @@ class LibraryFeed extends ChangeNotifier {
   String? error;
 
   bool _started = false;
-  CatalogCursor _cursor = const CatalogCursor();
-  int _offset = 0;
-  String _sessionId = '';
-  final Set<String> _ids = <String>{};
 
   /// 首次进入这个标签时才真正拉数据——四个标签一次全拉是浪费。
   Future<void> ensureLoaded() async {
     if (_started) return;
     _started = true;
-    await loadMore();
+    // ① 本地优先：有快照就先画出来，**一个请求都不等**（见 `docs/adr/0008`）。
+    final local = await database.libraryTab(tabIndex);
+    if (local.isNotEmpty) {
+      dramas.addAll(local);
+      notifyListeners();
+    }
+    // ② 再看一眼网络。本地已经有内容时，这一趟只做「头部有没有新剧」的检查、把新剧插到
+    //    最前，**不整页替换**：「综合」走的是推荐流，每页都不一样，整页换会让用户眼前
+    //    的列表自己跳一次。
+    await _pull(atTop: local.isNotEmpty);
   }
 
+  /// 下拉刷新。用户明确要最新的，所以**整页换掉**（与上面那条自动检查区别对待）。
+  ///
+  /// 只改内存、不落盘：快照的唯一写入者是「更新剧库」——下拉刷新落一份只有 18 条的
+  /// 快照，会把另外 72 部离线可看的剧删掉，那不是用户按这个手势想要的结果。
   Future<void> refresh() async {
     dramas.clear();
-    _ids.clear();
-    _cursor = const CatalogCursor();
-    _offset = 0;
-    _sessionId = '';
+    _pager = CatalogPager(client: client, tab: tab);
     hasMore = true;
     error = null;
     _started = true;
     notifyListeners();
-    await loadMore();
+    await _pull(atTop: true);
   }
 
-  Future<void> loadMore() async {
+  Future<void> loadMore() => _pull(atTop: false);
+
+  Future<void> _pull({required bool atTop}) async {
     if (loading || !hasMore) return;
     loading = true;
     error = null;
     notifyListeners();
 
     try {
-      if (tab.genreKey == null) {
-        final page = await client.fetchRecommendations(
-          RecommendationQuery(
-            genre: 'short_play',
-            offset: _offset,
-            sessionId: _sessionId,
-            seen: _ids.take(540).toList(),
-          ),
-        );
-        _offset = page.nextOffset;
-        _sessionId = page.sessionId;
-        hasMore = page.hasMore;
-        _append(page.dramas);
-      } else {
-        final page = await client.fetchCatalogPage(
-          genreKey: tab.genreKey!,
-          scene: tab.scene!,
-          category: tab.label,
-          cursor: _cursor,
-        );
-        _cursor = page.cursor;
-        hasMore = !page.cursor.exhausted;
-        _append(page.dramas);
-      }
+      final fresh = await _pager.next();
+      _absorb(fresh, atTop: atTop);
+      hasMore = !_pager.exhausted;
     } catch (failure) {
       // 报错但**不**把 hasMore 关掉：用户重试时还要能继续翻。
       error = '$failure';
@@ -126,12 +110,32 @@ class LibraryFeed extends ChangeNotifier {
     }
   }
 
-  void _append(List<Drama> incoming) {
-    for (final drama in incoming) {
-      if (drama.id.isEmpty || !_ids.add(drama.id)) continue;
-      dramas.add(drama);
-    }
+  /// 并进列表。规则见 [absorbDramas]。
+  void _absorb(List<Drama> fresh, {required bool atTop}) =>
+      absorbDramas(dramas, fresh, atTop: atTop);
+}
+
+/// 把网络新拉到的一页并进列表，返回真的插进去了几条。
+///
+/// [atTop] 为真表示这是「头部有没有新剧」的检查（往**最前**插），为假表示向后翻页（往
+/// 最后接）。两种都按 ID 去重：本地快照与网络分页覆盖的本来就是同一批剧。
+///
+/// 抽成顶层函数是为了能单测——这条规则很容易写反，而写反的症状很隐蔽：插到尾部时首页
+/// 看上去一切正常，只是**新剧永远排在几十部缓存之后**，没人滑得到。
+int absorbDramas(List<Drama> into, List<Drama> fresh, {required bool atTop}) {
+  final known = {for (final drama in into) drama.id};
+  final added = <Drama>[];
+  for (final drama in fresh) {
+    if (drama.id.isEmpty || !known.add(drama.id)) continue;
+    added.add(drama);
   }
+  if (added.isEmpty) return 0;
+  if (atTop) {
+    into.insertAll(0, added);
+  } else {
+    into.addAll(added);
+  }
+  return added.length;
 }
 
 /// 短剧库。参考页的信息架构：搜索 → 一级标签 → 题材 chip → 双列海报流。
@@ -154,8 +158,13 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
   void initState() {
     super.initState();
     _feeds = [
-      for (final tab in libraryTabs)
-        LibraryFeed(client: ref.read(hongguoClientProvider), tab: tab),
+      for (var index = 0; index < libraryTabs.length; index++)
+        LibraryFeed(
+          client: ref.read(hongguoClientProvider),
+          database: ref.read(databaseProvider),
+          tab: libraryTabs[index],
+          tabIndex: index,
+        ),
     ];
     _feeds.first.ensureLoaded();
   }

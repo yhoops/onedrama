@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -24,11 +26,30 @@ Future<void> main() async {
   );
 }
 
-class OneDramaApp extends ConsumerWidget {
+class OneDramaApp extends ConsumerStatefulWidget {
   const OneDramaApp({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<OneDramaApp> createState() => _OneDramaAppState();
+}
+
+class _OneDramaAppState extends ConsumerState<OneDramaApp> {
+  @override
+  void initState() {
+    super.initState();
+    // 每次启动自动更新一遍剧库（`docs/adr/0008`）。
+    //
+    // **推到第一帧之后**，而且不 await：它要打 20 次签名请求、跑几十秒，绝不能挡启动。
+    // 首页不依赖它——本地有快照就直接画，没有就走网络。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      // 启动这一轮失败不在用户面前冒任何东西：首页照常走网络，下次启动再试。
+      unawaited(ref.read(libraryImporterProvider).run());
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final settings = ref.watch(settingsProvider);
     return MaterialApp.router(
       title: 'onedrama',

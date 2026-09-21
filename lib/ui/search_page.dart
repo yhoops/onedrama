@@ -42,7 +42,9 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   void initState() {
     super.initState();
     if (widget.initialKeyword.isNotEmpty) {
-      _runSearch(widget.initialKeyword);
+      // 从首页题材 chip 跳过来的：**不进历史**。chip 是浏览快捷方式（代码注释里就写了
+      // 它是快捷搜索词而不是筛选器），首页有 10 个，随手点几个就把历史刷满了。见 5a。
+      _runSearch(widget.initialKeyword, record: false);
     } else {
       // 没有初始词就让键盘直接起来——搜索页的唯一目的就是输入。
       WidgetsBinding.instance.addPostFrameCallback(
@@ -89,12 +91,19 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     });
   }
 
-  Future<void> _runSearch(String raw) async {
+  /// 跑一次搜索。
+  ///
+  /// [record] 为假表示这次搜索**不进历史**——只有从首页题材 chip 跳过来的那一次是这样。
+  /// 手打回车、点联想项、点历史词与热门词都算：那都是「在这个页面里主动搜的词」。
+  Future<void> _runSearch(String raw, {bool record = true}) async {
     final keyword = raw.trim();
     if (keyword.isEmpty) return;
     _debounce?.cancel();
     _focus.unfocus();
     if (_input.text != keyword) _input.text = keyword;
+    if (record) {
+      unawaited(ref.read(searchHistoryProvider.notifier).remember(keyword));
+    }
 
     setState(() {
       _searching = true;
@@ -312,56 +321,71 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       return const SizedBox.shrink();
     }
 
-    return Padding(
+    // 还没提交、也没有联想：**最近搜索在上、热门搜索在下**。
+    // 历史最多 20 条，长了要能滚，所以整块放进 ListView。
+    final history = ref.watch(searchHistoryProvider);
+    return ListView(
       padding: const EdgeInsets.fromLTRB(
         OneDramaSizes.pagePadding,
-        18,
+        16,
         OneDramaSizes.pagePadding,
-        0,
+        24,
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            '热门搜索',
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              color: palette.secondaryText,
-            ),
+      children: [
+        if (history.isNotEmpty) ...[
+          _BlockHead(
+            title: '最近搜索',
+            action: '清空',
+            onAction: () => ref.read(searchHistoryProvider.notifier).clear(),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
           Wrap(
             spacing: 8,
             runSpacing: 8,
             children: [
-              for (final topic in libraryTopics)
-                Pressable(
-                  onTap: () => _runSearch(topic),
-                  scale: 0.94,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 7,
-                    ),
-                    decoration: BoxDecoration(
-                      color: palette.field,
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Text(
-                      topic,
-                      style: TextStyle(
-                        fontSize: 13.5,
-                        color: palette.primaryText,
-                      ),
-                    ),
-                  ),
+              for (final keyword in history)
+                _KeywordChip(
+                  label: keyword,
+                  onTap: () => _runSearch(keyword),
+                  // 长按删单条。**没有可见的删除键**是刻意的：参考图里没有搜索页
+                  // （`参考的前端页面/` 六张都没有），这一屏是自由设计，删除压在长按上、
+                  // 整块清空交给标题右侧那个「清空」。删错了有撤销。
+                  onLongPress: () => _forget(keyword),
                 ),
             ],
           ),
+          const SizedBox(height: 24),
         ],
-      ),
+        const _BlockHead(title: '热门搜索'),
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final topic in libraryTopics)
+              _KeywordChip(label: topic, onTap: () => _runSearch(topic)),
+          ],
+        ),
+      ],
     );
+  }
+
+  /// 删一条历史。给一次撤销——长按是误触重灾区，而这一条删了就找不回来了。
+  void _forget(String keyword) {
+    ref.read(searchHistoryProvider.notifier).remove(keyword);
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text('已删除「$keyword」'),
+          behavior: SnackBarBehavior.floating,
+          action: SnackBarAction(
+            label: '撤销',
+            onPressed: () =>
+                ref.read(searchHistoryProvider.notifier).remember(keyword),
+          ),
+        ),
+      );
   }
 
   static String _typeLabel(String type) => switch (type) {
@@ -370,6 +394,95 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     'common_query' || 'short_play_category' => '分类',
     _ => '',
   };
+}
+
+/// 一块的标题行：左边标题，右边可选的整块动作（现在只有「清空」用）。
+class _BlockHead extends StatelessWidget {
+  const _BlockHead({required this.title, this.action, this.onAction});
+
+  final String title;
+  final String? action;
+  final VoidCallback? onAction;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = OneDramaColors.of(context);
+    final action = this.action;
+    final onAction = this.onAction;
+    return Row(
+      children: [
+        Text(
+          title,
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+            color: palette.secondaryText,
+          ),
+        ),
+        const Spacer(),
+        if (action != null && onAction != null)
+          Pressable(
+            onTap: onAction,
+            scale: 0.94,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.delete_outline,
+                    size: 15,
+                    color: palette.secondaryText,
+                  ),
+                  const SizedBox(width: 3),
+                  Text(
+                    action,
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      color: palette.secondaryText,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// 一个词的小 chip。「最近搜索」与「热门搜索」共用，样式跟着首页的题材 chip 走。
+class _KeywordChip extends StatelessWidget {
+  const _KeywordChip({
+    required this.label,
+    required this.onTap,
+    this.onLongPress,
+  });
+
+  final String label;
+  final VoidCallback onTap;
+  final VoidCallback? onLongPress;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = OneDramaColors.of(context);
+    return Pressable(
+      onTap: onTap,
+      onLongPress: onLongPress,
+      scale: 0.94,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+        decoration: BoxDecoration(
+          color: palette.field,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(fontSize: 13.5, color: palette.primaryText),
+        ),
+      ),
+    );
+  }
 }
 
 class _ResultRow extends StatelessWidget {

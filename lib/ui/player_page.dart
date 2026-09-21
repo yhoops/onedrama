@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
@@ -103,10 +104,30 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   ///
   /// `dispose()` 里**不能碰 `ref`**——riverpod 3 会直接抛「widget 即将/已经卸载时用
   /// ref 是不安全的」。而退出时正是最该落一次进度的时候，所以把要用的东西先存下来。
+  /// 预取是异步的、退出时可能还在飞，它要用的东西同理。
   AppDatabase? _db;
+  HongguoClient? _client;
+  Dio? _dio;
   bool _rememberProgress = true;
   bool _autoPlayNext = true;
   bool _haptic = true;
+  bool _prefetchEnabled = true;
+
+  /// 预取在开播后**立刻**开始。
+  ///
+  /// 这里原本排的是「开播后等 10 秒」，初衷是别为「点进去看一眼就退」的人白下
+  /// 14.6 MB。真机反馈否掉了它：实测一集 10.9–18.8 MB 只要 3–4 秒下完，而人往往看
+  /// 十来秒就往下切——等 10 秒才开始，等于 13–14 秒才就绪，切集时照样要等加载。
+  /// 所以改成开播即开始，代价（早早退出会白下十几 MB）按取舍接受。
+  static const Duration _prefetchDelay = Duration.zero;
+
+  Timer? _prefetchTimer;
+
+  /// 在飞的那次预取。退出播放页要能把它掐掉。
+  CancelToken? _prefetchCancel;
+
+  /// 正在预取哪一集（避免重复起一次）。
+  String? _prefetchingId;
 
   Episode get _episode => widget.request.episodes[_index];
   Drama get _drama => widget.request.drama;
@@ -116,8 +137,11 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     final settings = ref.read(settingsProvider);
     _rememberProgress = settings.rememberProgress;
     _autoPlayNext = settings.autoPlayNext;
+    _prefetchEnabled = settings.prefetchNext;
     _haptic = settings.hapticFeedback;
     _db = ref.read(databaseProvider);
+    _client = ref.read(hongguoClientProvider);
+    _dio = ref.read(dioProvider);
   }
 
   @override
@@ -134,6 +158,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   void dispose() {
     _poll?.cancel();
     _hideControls?.cancel();
+    _prefetchTimer?.cancel();
+    // 退出就不下了：剩下的那几 MB 是纯浪费，下次进来会重新排。
+    _prefetchCancel?.cancel();
     // 退出时把进度落一次——这是「记忆播放进度」最常见的兑现点。
     unawaited(_saveProgress());
     _player.dispose();
@@ -144,7 +171,16 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
 
   // ---------- 取流、解密、播放 ----------
 
-  Future<void> _prepare({int? startAtMs}) async {
+  /// 准备一集：能播本地文件就播本地，否则走流式，最后才退回「先下整集再解」。
+  ///
+  /// [override] 是用户在播放设置面板里**手动挑的画质**。它必须绕过本地缓存——磁盘上
+  /// 那份是预取时挑的档，跟新挑的档不是同一路流。
+  Future<void> _prepare({int? startAtMs, Media? override}) async {
+    _prefetchTimer?.cancel();
+    _prefetchCancel?.cancel();
+    _prefetchCancel = null;
+    _prefetchingId = null;
+
     setState(() {
       _preparing = true;
       _prepareProgress = 0;
@@ -154,16 +190,39 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
 
     try {
       final client = ref.read(hongguoClientProvider);
-      final media = await client.resolveMedia(
-        _drama.sourceId,
-        _episode.videoId,
-      );
       final settings = ref.read(settingsProvider);
-      final picked = _pickVariant(media, settings.preferredQuality);
+
+      // 预取过的：磁盘上就有明文，**一个网络请求都不用打**。宽高与档位列表在旁挂里
+      // （见 `docs/adr/0009`）。旁挂丢了就退回取流——但文件照播，省下的仍是流式那段。
+      File? local;
+      Media? restored;
+      if (override == null) {
+        final cached = await episodeCacheFile(_episode.videoId);
+        if (await cached.exists() && await cached.length() > 1024) {
+          local = cached;
+          restored = await readEpisodeSidecar(_episode.videoId);
+        }
+      }
+
+      final Media media;
+      if (override != null) {
+        media = override;
+      } else if (restored != null) {
+        media = restored;
+      } else {
+        media = await client.resolveMedia(_drama.sourceId, _episode.videoId);
+      }
+
+      // 画质只在「刚从网络取回来」时才按设置挑：本地那份与旁挂里的都是**已经确定的
+      // 那一档**，重挑一次只会让标签与画面对不上。
+      final picked = override == null && restored == null
+          ? _pickVariant(media, settings.preferredQuality)
+          : media;
       if (mounted) {
         setState(() {
           _media = picked;
           _qualityLabel = picked.quality > 0 ? '${picked.quality}P' : '自动';
+          if (local != null) _prepareNote = '这一集已预取到本地，直接播';
         });
       }
 
@@ -175,7 +234,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       // 能算出解密计划就走**流式**：只取头部（`moov` 在那里，约 1 MB）就够了，不用等
       // 整集下完。算不出计划（站点改了封装之类）再退回「先下载整集再解」那条已验证的路。
       Uint8List? plan;
-      if (picked.isEncrypted) {
+      if (local == null && picked.isEncrypted) {
         try {
           plan = await _buildDecryptPlan(picked);
         } catch (_) {
@@ -187,7 +246,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       }
 
       if (!mounted) return;
-      if (plan != null) {
+      if (local != null) {
+        await _player.setMedia(url: local.uri.toString());
+      } else if (plan != null) {
         await _player.setMedia(
           url: picked.url,
           referer: picked.referer,
@@ -227,6 +288,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       if (mounted) setState(() => _preparing = false);
       _startPolling();
       _scheduleHideControls();
+      _schedulePrefetch();
     } catch (failure) {
       if (mounted) {
         setState(() {
@@ -243,17 +305,35 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   /// 编码挑过最优）。
   Media _pickVariant(Media media, int preferred) {
     if (preferred <= 0 || media.variants.isEmpty) return media;
+    final variants = media.variants;
     Media best = media;
     var gap = 1 << 30;
-    for (final variant in media.variants) {
+    for (final variant in variants) {
       final current = (variant.quality - preferred).abs();
       if (current < gap) {
         best = variant;
         gap = current;
       }
     }
-    return best;
+    return _attachVariants(best, variants);
   }
+
+  /// 把档位列表挂回一个 [Media]。
+  ///
+  /// 档位列表挂在**外层**取流结果上，而 `media.variants` 里每一项自己是没有列表的
+  /// （`selectAppMedia` 就是这么构造的）。「画质」面板的选项取自 `_media.variants`，
+  /// 所以**任何一次「挑出一档当 `_media`」都必须把列表挂回去**——不挂的话，面板下一
+  /// 秒就空了（`_showQualities` 见空即返回，按钮点了没反应）。
+  Media _attachVariants(Media media, List<Media> variants) => Media(
+    url: media.url,
+    referer: media.referer,
+    duration: media.duration,
+    cencKey: media.cencKey,
+    quality: media.quality,
+    width: media.width,
+    height: media.height,
+    variants: variants,
+  );
 
   /// 只取流的头部（`moov` 就在开头），算出样本索引与等长替换补丁，编成解密计划。
   ///
@@ -348,6 +428,83 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     _prepare(startAtMs: 0);
   }
 
+  // ---------- 预取下一集 ----------
+
+  /// 排一次预取：当前集起播后再等 [_prefetchDelay]，然后去把下一集下下来。
+  ///
+  /// 延时是为了「点进去看一眼就退」的用法——那种情况下 14.6 MB 是白下的。退出播放页
+  /// 会连同没到点的定时器一起取消。
+  void _schedulePrefetch() {
+    _prefetchTimer?.cancel();
+    if (!_prefetchEnabled) return;
+    if (_index + 1 >= widget.request.episodes.length) return;
+    _prefetchTimer = Timer(_prefetchDelay, () => unawaited(_prefetchNext()));
+  }
+
+  /// 后台把下一集整集下完、解密、落盘，并把取流结果写成旁挂（`docs/adr/0009`）。
+  ///
+  /// **失败一律静默**：预取是「顺手多做的事」，它出问题不该在播放页上冒出任何东西——
+  /// 切过去时照常走流式，用户至多觉得慢了一点。
+  Future<void> _prefetchNext() async {
+    final client = _client;
+    final dio = _dio;
+    if (client == null || dio == null || !_prefetchEnabled) return;
+
+    final next = _index + 1;
+    if (next >= widget.request.episodes.length) return;
+    final episode = widget.request.episodes[next];
+    if (_prefetchingId == episode.videoId) return;
+
+    final target = await episodeCacheFile(episode.videoId);
+    if (await target.exists() && await target.length() > 1024) return;
+
+    final cancel = CancelToken();
+    _prefetchCancel = cancel;
+    _prefetchingId = episode.videoId;
+    final startedAt = DateTime.now();
+    try {
+      final media = await client.resolveMedia(_drama.sourceId, episode.videoId);
+      // 目标**与当前集同一档**：切过去不该跳画质。当前集若是预取来的，`_media` 就是
+      // 磁盘上那一档，用它当目标；`_pickVariant` 会挑最接近的那一路。
+      final picked = _pickVariant(media, _media?.quality ?? 0);
+      final file = await prepareEpisode(
+        dio: dio,
+        media: picked,
+        videoId: episode.videoId,
+        cancelToken: cancel,
+      );
+      await writeEpisodeSidecar(
+        episode.videoId,
+        media: media,
+        pickedQuality: picked.quality,
+      );
+      final pruned = await pruneEpisodeCache(protect: _protectedIds());
+      // 刻意留的取证痕迹：切集前后的 `STATE_READY` 对比与「有没有真的预取到」都靠它
+      // （`adb logcat -s flutter`）。同 `[spike]` 那套。
+      debugPrint(
+        '[prefetch] 第 ${episode.number} 集就绪 · ${picked.quality}P · '
+        '${await file.length()} 字节 · '
+        '${DateTime.now().difference(startedAt).inMilliseconds}ms'
+        '${pruned > 0 ? ' · 淘汰 $pruned 集' : ''}',
+      );
+    } catch (error) {
+      debugPrint('[prefetch] 第 ${episode.number} 集放弃：$error');
+    } finally {
+      // 期间没被新的一次预取顶掉，才清标记。
+      if (identical(_prefetchCancel, cancel)) {
+        _prefetchCancel = null;
+        _prefetchingId = null;
+      }
+    }
+  }
+
+  /// 正在播的这一集与下一集不能被淘汰。
+  Set<String> _protectedIds() => <String>{
+    _episode.videoId,
+    if (_index + 1 < widget.request.episodes.length)
+      widget.request.episodes[_index + 1].videoId,
+  };
+
   // ---------- 手势 ----------
 
   void _toggleControls() {
@@ -426,12 +583,18 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   }
 
   Future<void> _setQuality(Media media) async {
+    // 面板递过来的那一档来自 `_media.variants`，自己的列表是空的——挂回去，否则挑了
+    // 一次画质之后「画质」面板就打不开了。
+    final picked = _attachVariants(media, _media?.variants ?? media.variants);
     setState(() {
-      _media = media;
-      _qualityLabel = media.quality > 0 ? '${media.quality}P' : '自动';
+      _media = picked;
+      _qualityLabel = picked.quality > 0 ? '${picked.quality}P' : '自动';
     });
-    // 换画质要换文件——预下载路径下就是重下一次。流式数据源做完就不用了。
-    await _prepare(startAtMs: _state.position.inMilliseconds);
+    // 磁盘上那份是**预取时挑的那一档**，跟刚挑的这档不是同一路流。留着它，下次再看
+    // 这一集会莫名其妙地退回旧画质（画面一个新档、标签一个旧档也说不通），所以丢掉。
+    // 换画质仍要重新取一次流——流式数据源做完就不用了，见 `docs/plan.md` 阶段 1 的 4b 收尾。
+    await dropEpisodeCache(_episode.videoId);
+    await _prepare(startAtMs: _state.position.inMilliseconds, override: picked);
   }
 
   Future<void> _toggleFullscreen() async {
@@ -1437,14 +1600,20 @@ class _SettingsSheetState extends State<_SettingsSheet> {
 
   Future<void> _showQualities() async {
     final variants = widget.media?.variants ?? const <Media>[];
-    if (variants.isEmpty) return;
+    final current = widget.media;
+    if (variants.isEmpty || current == null) return;
     final picked = await _pick<Media>(
       title: '画质',
       options: [
         for (final variant in variants)
           (variant, variant.quality > 0 ? '${variant.quality}P' : '自动'),
       ],
-      current: widget.media,
+      // 按**档位**认当前项，不按对象身份：`Media` 没有值相等语义，而当前项与列表项
+      // 是两次构造出来的，身份比对永远为 false——勾会一直不出现。
+      current: variants.firstWhere(
+        (variant) => variant.quality == current.quality,
+        orElse: () => current,
+      ),
     );
     if (picked != null) widget.onPickQuality(picked);
   }

@@ -3,8 +3,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hongguo_dart/hongguo_dart.dart';
 
 import 'database.dart';
+import 'library_importer.dart';
 import 'network.dart';
 import 'ranking_cache.dart';
+import 'search_history.dart';
 import 'settings.dart';
 
 /// 去重 + TTL 缓存拦截器。单独暴露是为了设置页能清缓存、也能读诊断计数。
@@ -96,6 +98,52 @@ final webSocialProvider = FutureProvider.family<SocialInfo, String>(
 /// 榜单的「上次成功结果」。落盘，所以冷启动也能立刻显示上次的榜单。
 final rankingCacheProvider = Provider<RankingCache>(
   (ref) => RankingCache(ref.watch(settingsStoreProvider).prefs),
+);
+
+/// 搜索历史（搜过的词）。改动立刻落盘。
+///
+/// 顺序即「最近在前」，UI 直接用 [state]。见 `docs/plan.md` 阶段 5a。
+class SearchHistoryNotifier extends Notifier<List<String>> {
+  @override
+  List<String> build() =>
+      SearchHistoryStore(ref.watch(settingsStoreProvider).prefs).entries();
+
+  SearchHistoryStore get _store =>
+      SearchHistoryStore(ref.read(settingsStoreProvider).prefs);
+
+  Future<void> remember(String keyword) async {
+    final next = pushSearchKeyword(state, keyword);
+    state = next;
+    await _store.save(next);
+  }
+
+  Future<void> remove(String keyword) async {
+    final next = state.where((item) => item != keyword).toList();
+    state = next;
+    await _store.save(next);
+  }
+
+  Future<void> clear() async {
+    state = const <String>[];
+    await _store.clear();
+  }
+}
+
+final searchHistoryProvider =
+    NotifierProvider<SearchHistoryNotifier, List<String>>(
+      SearchHistoryNotifier.new,
+    );
+
+/// 剧库导入：每次启动自动跑一遍，设置「剧库与存储 → 更新剧库」手动再跑一次。
+///
+/// 它是**单例**（Provider 按容器缓存），内部还会把并发的两轮合成一轮——见
+/// [LibraryImporter.run]。见 `docs/adr/0008`。
+final libraryImporterProvider = Provider<LibraryImporter>(
+  (ref) => LibraryImporter(
+    client: ref.watch(hongguoClientProvider),
+    database: ref.watch(databaseProvider),
+    prefs: ref.watch(settingsStoreProvider).prefs,
+  ),
 );
 
 /// 搜索联想（最多 10 条）。

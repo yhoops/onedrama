@@ -1,6 +1,6 @@
 # docs/shots
 
-README 用的真机截图。都是 1080×2400 的 JPEG（`-q:v 3`），6 张共约 1.4 MB。
+README 用的真机截图。都是 1080×2400 的 JPEG（`-q:v 3`），7 张共约 1.5 MB。
 
 原始 PNG 在 `build/shots/`（30 张全分辨率，约 30 MB），**那份不在版本控制里**——
 `build/` 会被 `flutter clean` 清掉，这也是当时把这些图转出来的原因。
@@ -13,6 +13,10 @@ README 用的真机截图。都是 1080×2400 的 JPEG（`-q:v 3`），6 张共�
 | `rank-dark.jpg` | `build/shots/new-26-rank-dark.png` | 榜单页，深色 |
 | `search-dark.jpg` | `build/shots/new-25-search-dark.png` | 搜索页，深色 |
 | `mine-dark.jpg` | `build/shots/new-23-mine-dark.png` | 我的（收藏 / 历史），深色 |
+| `settings-light.jpg` | `build/shots-5c/16-storage.png` | 设置页，浅色（阶段 5 补；滚动到「剧库与存储」那一组） |
+
+设置页这张是**阶段 5 结束时补的**——它此前是唯一有页面文件却没有截图的模块（见
+`docs/模块划分.md` 的「已知缺口」，那条因此可以划掉了）。
 
 截图里的剧集封面与正片画面来自红果，只作项目展示用；`参考的前端页面/` 那 8 张同理，
 那是设计依据，不是本项目的产物。

@@ -28,6 +28,10 @@ _Avoid_: Web Source, 网页源, H5, front-end
 A concrete playable stream for an Episode: HTTP(S) URL, optional AES-128 CENC key, referer, and the frame's real pixel size. The Episode's `hongguo-cenc://{vid}` address is a placeholder, not Media.
 _Avoid_: video URL, stream (alone), playback
 
+**Prefetch**:
+Downloading and decrypting the next Episode's [Media] to disk ahead of time, so that switching episodes plays a local file instead of opening a new stream. It is not offline download: the file is a cache, kept for ten Episodes at most.
+_Avoid_: 缓存 (alone), preload, 离线下载, 预下载
+
 **Quality Label**:
 The stream's tier name as published by 红果 (360p / 480p / … / 1080p). It is **not** the frame's pixel height — some Dramas label a 1280×720 stream 「1080p」, and a portrait Drama's 「480p」 is 480 wide × 854 tall. Name a tier to the user with the label; lay out the picture with Media's real size.
 _Avoid_: resolution, 分辨率, quality (alone)
@@ -55,6 +59,14 @@ _Avoid_: recently played, 播放记录, 观看记录 (when meaning the list)
 **Favorite**:
 A Drama kept for later, whether or not it was watched. Local to this device; not an account.
 _Avoid_: 追剧, collection, watchlist, bookmark
+
+**Library Snapshot**:
+A local copy of the Drama catalog — the four home tabs' first five pages each, cover images included. Rewritten wholesale on every app start. Separate from [Favorite] and [Watch Progress], which it never touches.
+_Avoid_: 剧库 (alone), 缓存, offline library. 「短剧库」 names the page; this names the data.
+
+**Search History**:
+The keywords actually searched on this device, newest first, at most twenty. Does not include the home page's topic shortcuts — those are browsing, not searching.
+_Avoid_: 搜索记忆, 最近搜索 (as the domain name), recent queries
 
 **Ranking Board**:
 A ranked list of Dramas published by 红果 for a period (总热播 / 真人 / 漫剧 / AI). Refreshes daily.

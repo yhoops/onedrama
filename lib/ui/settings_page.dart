@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/cover_cache.dart';
+import '../data/library_importer.dart';
 import '../data/media_cache.dart';
 import '../data/providers.dart';
 import '../data/settings.dart';
@@ -98,6 +99,15 @@ class SettingsPage extends ConsumerWidget {
                   value: settings.autoPlayNext,
                   onChanged: (value) =>
                       notifier.update((s) => s.copyWith(autoPlayNext: value)),
+                ),
+                // 与「自动播放下一集」**解耦**：关掉连播仍然预取——用户可能自己点下一集。
+                // 关掉它则预取完全不发生，见 docs/adr/0009。
+                _SwitchRow(
+                  icon: Icons.download_for_offline_outlined,
+                  label: '预缓存下一集',
+                  value: settings.prefetchNext,
+                  onChanged: (value) =>
+                      notifier.update((s) => s.copyWith(prefetchNext: value)),
                 ),
                 _SwitchRow(
                   icon: Icons.history_toggle_off,
@@ -389,6 +399,9 @@ class _StorageSectionState extends ConsumerState<_StorageSection> {
   /// 「按下去会腾出多少」，而这一行清的就是这两样。
   int _coverBytes = 0;
 
+  /// 上次导入剧库的时间。异步读的，所以和上面两个一起放进状态。
+  DateTime? _importedAt;
+
   bool _busy = false;
 
   @override
@@ -404,6 +417,7 @@ class _StorageSectionState extends ConsumerState<_StorageSection> {
       setState(() {
         _usage = usage;
         _coverBytes = covers;
+        _importedAt = ref.read(libraryImporterProvider).lastImportedAt();
       });
     }
   }
@@ -427,6 +441,25 @@ class _StorageSectionState extends ConsumerState<_StorageSection> {
     }
   }
 
+  /// 手动跑一遍剧库导入。启动时已经自动跑过一次，这里是「我就要现在更新」。
+  Future<void> _importLibrary() async {
+    final report = await ref.read(libraryImporterProvider).run();
+    await _refreshUsage();
+    if (!mounted) return;
+    final parts = <String>['已导入 ${report.dramas} 部剧'];
+    if (report.failedTabs > 0) {
+      parts.add('${report.failedTabs} 个标签失败，保留了旧数据');
+    }
+    if (report.coversWarmed > 0) parts.add('封面 ${report.coversWarmed} 张');
+    _toast(parts.join('，'));
+  }
+
+  /// 那一行右侧的静态文案：「3 分钟前更新」/「尚未更新」。
+  String _updatedLabel() {
+    final at = _importedAt;
+    return at == null ? '尚未更新' : '${_relativeTime(at)}更新';
+  }
+
   @override
   Widget build(BuildContext context) {
     final usage = _usage;
@@ -436,6 +469,20 @@ class _StorageSectionState extends ConsumerState<_StorageSection> {
     return _Section(
       title: '剧库与存储',
       children: [
+        _RowShell(
+          icon: Icons.library_add_outlined,
+          label: '更新剧库',
+          onTap: _busy ? null : () => _run(_importLibrary),
+          // 在跑就显示进度，跑完显示「3 分钟前更新」。启动时那一轮也会走到这里——
+          // 进度走 ValueNotifier，所以两条路径都能看见同一份状态。
+          trailing: ValueListenableBuilder<LibraryImportProgress?>(
+            valueListenable: ref.read(libraryImporterProvider).progress,
+            builder: (context, progress, _) => Text(
+              progress?.label ?? _updatedLabel(),
+              style: TextStyle(fontSize: 14, color: palette.secondaryText),
+            ),
+          ),
+        ),
         _RowShell(
           icon: Icons.cleaning_services_outlined,
           label: '清除缓存',
@@ -449,11 +496,16 @@ class _StorageSectionState extends ConsumerState<_StorageSection> {
                   final boards = await ref.read(rankingCacheProvider).clear();
                   // 封面同理，而且它有两层：磁盘那份与内存那份，见 clearCoverCaches。
                   final covers = await clearCoverCaches();
+                  // 剧库快照同属这一类。顺手把时间戳也忘掉——快照都没了，设置页再显示
+                  // 「刚刚更新」就是骗人。
+                  final library = await database.clearLibrary();
+                  await ref.read(libraryImporterProvider).forgetImportedAt();
                   await _refreshUsage();
                   _toast(
                     '已清除 ${result.files} 个剧集缓存'
                     '（${formatBytes(result.bytes)}）'
                     '${boards > 0 ? '，榜单缓存已重置' : ''}'
+                    '${library > 0 ? '，剧库快照 $library 条' : ''}'
                     '，封面缓存 ${formatBytes(covers)}',
                   );
                 }),
@@ -497,6 +549,23 @@ class _StorageSectionState extends ConsumerState<_StorageSection> {
             color: palette.secondaryText,
           ),
         ),
+        // 搜索历史是**用户数据**（不是可重建的本地副本），所以它不归「清除缓存」管，
+        // 自己占一行——与清空历史、清空收藏同一个道理。
+        _RowShell(
+          icon: Icons.manage_search_outlined,
+          label: '清空搜索历史',
+          onTap: _busy
+              ? null
+              : () => _run(() async {
+                  await ref.read(searchHistoryProvider.notifier).clear();
+                  _toast('搜索历史已清空');
+                }),
+          trailing: Icon(
+            Icons.chevron_right,
+            size: 20,
+            color: palette.secondaryText,
+          ),
+        ),
         _RowShell(
           icon: Icons.fingerprint,
           label: '重新生成设备号',
@@ -517,4 +586,14 @@ class _StorageSectionState extends ConsumerState<_StorageSection> {
       ],
     );
   }
+}
+
+/// 「3 分钟前」这种。`mine_page.dart` 里那份是私有的，这里就四行，不为了共用一个函数
+/// 绕一圈——与 `library_page.dart` 里那份 `_clock` 同一个口径。
+String _relativeTime(DateTime time) {
+  final diff = DateTime.now().difference(time);
+  if (diff.inMinutes < 1) return '刚刚';
+  if (diff.inHours < 1) return '${diff.inMinutes} 分钟前';
+  if (diff.inDays < 1) return '${diff.inHours} 小时前';
+  return '${time.month}月${time.day}日';
 }

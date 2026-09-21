@@ -22,51 +22,81 @@ class AppDatabase {
   final Database _db;
 
   /// 打开（首次会建库）。App 启动时调一次。
+  ///
+  /// 建库版本 **2** 起多了 `library_entries`（剧库快照，见 `docs/adr/0008`）。加表只走
+  /// `onUpgrade`，老数据一律不动——收藏 / 历史 / 进度是用户数据，不该为了加一张可重建的
+  /// 表而重建库。
+  static const int schemaVersion = 2;
+
   static Future<AppDatabase> open({String name = 'onedrama.db'}) async {
     final directory = await getDatabasesPath();
     final database = await openDatabase(
       p.join(directory, name),
-      version: 1,
+      version: schemaVersion,
       onCreate: (db, version) async {
-        await db.execute('''
-          CREATE TABLE drama_snapshots (
-            id             TEXT PRIMARY KEY,
-            title          TEXT NOT NULL DEFAULT '',
-            cover          TEXT NOT NULL DEFAULT '',
-            episode_count  TEXT NOT NULL DEFAULT '',
-            category_name  TEXT NOT NULL DEFAULT '',
-            remark         TEXT NOT NULL DEFAULT '',
-            release_status TEXT NOT NULL DEFAULT '',
-            payload        TEXT NOT NULL,
-            updated_at     INTEGER NOT NULL
-          )
-        ''');
-        await db.execute('''
-          CREATE TABLE favorites (
-            drama_id TEXT PRIMARY KEY,
-            added_at INTEGER NOT NULL
-          )
-        ''');
-        await db.execute('''
-          CREATE TABLE watch_progress (
-            drama_id       TEXT NOT NULL,
-            video_id       TEXT NOT NULL,
-            episode_number INTEGER NOT NULL DEFAULT 0,
-            position_ms    INTEGER NOT NULL DEFAULT 0,
-            duration_ms    INTEGER NOT NULL DEFAULT 0,
-            completed      INTEGER NOT NULL DEFAULT 0,
-            updated_at     INTEGER NOT NULL,
-            PRIMARY KEY (drama_id, video_id)
-          )
-        ''');
-        // 历史列表要按时间倒序取每部剧最新一条，给它一个索引。
-        await db.execute(
-          'CREATE INDEX idx_watch_progress_updated '
-          'ON watch_progress(updated_at DESC)',
-        );
+        await _createCore(db);
+        await _createLibrary(db);
+      },
+      onUpgrade: (db, from, to) async {
+        if (from < 2) await _createLibrary(db);
       },
     );
     return AppDatabase._(database);
+  }
+
+  static Future<void> _createCore(Database db) async {
+    await db.execute('''
+      CREATE TABLE drama_snapshots (
+        id             TEXT PRIMARY KEY,
+        title          TEXT NOT NULL DEFAULT '',
+        cover          TEXT NOT NULL DEFAULT '',
+        episode_count  TEXT NOT NULL DEFAULT '',
+        category_name  TEXT NOT NULL DEFAULT '',
+        remark         TEXT NOT NULL DEFAULT '',
+        release_status TEXT NOT NULL DEFAULT '',
+        payload        TEXT NOT NULL,
+        updated_at     INTEGER NOT NULL
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE favorites (
+        drama_id TEXT PRIMARY KEY,
+        added_at INTEGER NOT NULL
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE watch_progress (
+        drama_id       TEXT NOT NULL,
+        video_id       TEXT NOT NULL,
+        episode_number INTEGER NOT NULL DEFAULT 0,
+        position_ms    INTEGER NOT NULL DEFAULT 0,
+        duration_ms    INTEGER NOT NULL DEFAULT 0,
+        completed      INTEGER NOT NULL DEFAULT 0,
+        updated_at     INTEGER NOT NULL,
+        PRIMARY KEY (drama_id, video_id)
+      )
+    ''');
+    // 历史列表要按时间倒序取每部剧最新一条，给它一个索引。
+    await db.execute(
+      'CREATE INDEX idx_watch_progress_updated '
+      'ON watch_progress(updated_at DESC)',
+    );
+  }
+
+  /// 剧库快照：一部剧一行，按 `(标签, 名次)` 定位。
+  ///
+  /// `payload` 存整份 Drama JSON——首页要拿它渲染海报卡（标题 / 封面 / 集数 / 角标），
+  /// 少一个字段就得多打一次详情，而那正好抵消了「本地优先」的意义。
+  static Future<void> _createLibrary(Database db) async {
+    await db.execute('''
+      CREATE TABLE library_entries (
+        tab      INTEGER NOT NULL,
+        rank     INTEGER NOT NULL,
+        drama_id TEXT NOT NULL,
+        payload  TEXT NOT NULL,
+        PRIMARY KEY (tab, rank)
+      )
+    ''');
   }
 
   Future<void> close() => _db.close();
@@ -232,6 +262,50 @@ class AppDatabase {
           'AND id NOT IN (SELECT drama_id FROM watch_progress)',
     );
   }
+
+  // ---------- 剧库快照 ----------
+
+  /// 整批换掉一个标签的快照。
+  ///
+  /// **一个事务**：中途失败不留半新半旧——首页拿到半份数据会缺剧，而那看起来像
+  /// 「站点没这部剧」，不像一次失败。见 `docs/adr/0008`。
+  Future<void> replaceLibraryTab(int tab, List<Drama> dramas) async {
+    await _db.transaction((txn) async {
+      await txn.delete('library_entries', where: 'tab = ?', whereArgs: [tab]);
+      final batch = txn.batch();
+      for (var index = 0; index < dramas.length; index++) {
+        final drama = dramas[index];
+        if (drama.id.isEmpty) continue;
+        batch.insert('library_entries', <String, Object?>{
+          'tab': tab,
+          'rank': index,
+          'drama_id': drama.id,
+          'payload': jsonEncode(drama.toJson()),
+        });
+      }
+      await batch.commit(noResult: true);
+    });
+  }
+
+  /// 一个标签的快照，按名次。空表示还没导入过（或刚被清掉）。
+  Future<List<Drama>> libraryTab(int tab) async {
+    final rows = await _db.query(
+      'library_entries',
+      where: 'tab = ?',
+      whereArgs: [tab],
+      orderBy: 'rank ASC',
+    );
+    return [
+      for (final row in rows)
+        _dramaOfPayload(row['payload'] as String?, row['drama_id'] as String),
+    ];
+  }
+
+  /// 清掉整份剧库快照，返回删掉的行数。
+  ///
+  /// 「清除缓存」用它。快照是**可重建的本地副本**，与榜单缓存、封面同一个口径；
+  /// 收藏 / 历史 / 进度在别的表里，一个都不受影响。
+  Future<int> clearLibrary() => _db.delete('library_entries');
 
   Drama _dramaOfPayload(String? payload, String fallbackId) {
     if (payload == null || payload.isEmpty) return Drama(id: fallbackId);

@@ -21,6 +21,7 @@ class AppSettings {
     this.preferredQuality = 0,
     this.autoPlayNext = true,
     this.rememberProgress = true,
+    this.prefetchNext = true,
     this.controlSide = ControlSide.right,
     this.gestureSensitivity = GestureSensitivity.medium,
     this.hapticFeedback = true,
@@ -42,6 +43,12 @@ class AppSettings {
   /// 记忆播放进度。关掉就不再写 [WatchProgress]。
   final bool rememberProgress;
 
+  /// 预缓存下一集。见 `docs/adr/0009`。
+  ///
+  /// 与 [autoPlayNext] **解耦**：关掉自动连播仍然预取，因为用户可能手动点下一集。
+  /// 关掉它则预取完全不发生——它是这个功能唯一的开关（不按网络类型分流）。
+  final bool prefetchNext;
+
   final ControlSide controlSide;
   final GestureSensitivity gestureSensitivity;
   final bool hapticFeedback;
@@ -53,6 +60,7 @@ class AppSettings {
     int? preferredQuality,
     bool? autoPlayNext,
     bool? rememberProgress,
+    bool? prefetchNext,
     ControlSide? controlSide,
     GestureSensitivity? gestureSensitivity,
     bool? hapticFeedback,
@@ -63,6 +71,7 @@ class AppSettings {
     preferredQuality: preferredQuality ?? this.preferredQuality,
     autoPlayNext: autoPlayNext ?? this.autoPlayNext,
     rememberProgress: rememberProgress ?? this.rememberProgress,
+    prefetchNext: prefetchNext ?? this.prefetchNext,
     controlSide: controlSide ?? this.controlSide,
     gestureSensitivity: gestureSensitivity ?? this.gestureSensitivity,
     hapticFeedback: hapticFeedback ?? this.hapticFeedback,
@@ -75,6 +84,7 @@ class AppSettings {
     'preferredQuality': preferredQuality,
     'autoPlayNext': autoPlayNext,
     'rememberProgress': rememberProgress,
+    'prefetchNext': prefetchNext,
     'controlSide': controlSide.name,
     'gestureSensitivity': gestureSensitivity.name,
     'hapticFeedback': hapticFeedback,
@@ -89,6 +99,7 @@ class AppSettings {
     preferredQuality: (json['preferredQuality'] as num?)?.toInt() ?? 0,
     autoPlayNext: json['autoPlayNext'] as bool? ?? true,
     rememberProgress: json['rememberProgress'] as bool? ?? true,
+    prefetchNext: json['prefetchNext'] as bool? ?? true,
     controlSide:
         _enumByName(ControlSide.values, json['controlSide']) ??
         ControlSide.right,
