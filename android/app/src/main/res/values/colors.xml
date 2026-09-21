@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      自适应图标的底色。取自 `logo.png` 四个角的实际像素——四角实测都是 #FCFCFC
+      （`ffmpeg crop=24:24,scale=1:1` 取样）。跟 logo 自带的圆角同色，所以「缩进安全区
+      留出来的那圈底」与图形之间看不出接缝：观感是留白，不是加了个相框。
+    -->
+    <color name="ic_launcher_background">#FCFCFC</color>
+</resources>

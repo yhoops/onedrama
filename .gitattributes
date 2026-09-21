@@ -1,0 +1,31 @@
+# 行尾：本机 `core.autocrlf=true`，不在这里钉死的话，checkout 出来会变 CRLF——
+# 改一个字符就变成整文件 diff，而且换台机器看同一份文件又是另一套行尾。
+# 仓库内与工作区都是 LF：Dart / Go / Kotlin / Gradle 全都不在乎，但 diff 在乎。
+* text=auto eol=lf
+
+# Windows 批处理必须 CRLF。当前仓库里没有 .bat（gradlew.bat 在 android/.gitignore 里），
+# 先钉住，免得将来加脚本时踩。
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 二进制：不做行尾转换，也别让 git 试图 diff。
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.gif binary
+*.ttf binary
+*.otf binary
+*.so binary
+*.jar binary
+*.apk binary
+*.aab binary
+*.mp4 binary
+*.p12 binary
+*.jks binary
+*.keystore binary
+
+# 语言统计：这两处不是源码。不标的话，8 张设计参考截图与 42 KB 的 plan.md
+# 会把 Dart 的占比压下去，落地页的语言条会读错这个仓库是什么写的。
+参考的前端页面/** linguist-documentation
+docs/** linguist-documentation

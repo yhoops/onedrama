@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  自适应图标（Android 8+）。
+
+  两层，按 Android 的安全区规则摆：
+  - **背景**：`@color/ic_launcher_background`（#FCFCFC，取自 logo 四角）。
+  - **前景**：整张 `logo.png` **缩到 72/108 = 66.7% 居中**，四周透明。
+
+  为什么不能像一开始那样「整张铺满背景层」：启动器只显示画布的**中间一部分**，而且
+  各家还不一样——实测这台 HyperOS（Android 15）显示约 **80%**（用字标在图标里的实际
+  占比反推：字标横跨 13.6%..87%，铺满时它被切成「nedram」）。Android 定义的安全区是
+  72/108 = 66.7%，正好是各家掩膜的公共子集。这张 logo 的**有效内容本身就横跨 13.6%..87%**
+  ——比安全区还宽——所以「铺满」对它必然裁字标。缩进安全区是唯一两头都保得住的做法。
+
+  底色与 logo 自带的圆角同色（都是 #FCFCFC），所以缩进来留出的那圈底看不出接缝。
+
+  下限 `-v26`：Android 8.0 起才认 adaptive-icon。8.0 以下、以及不认自适应图标的启动器，
+  用的是同目录外的 `mipmap-*/ic_launcher.png`——那五张**刻意保持整张铺满**：legacy
+  路径没有自适应掩膜，不会被裁，铺满反而更好看。
+-->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/ic_launcher_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+</adaptive-icon>

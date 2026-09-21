@@ -1,0 +1,59 @@
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# The .vscode folder contains launch configuration and tasks you configure in
+# VS Code which you may wish to be included in version control, so this line
+# is commented out by default.
+#.vscode/
+
+# Flutter/Dart/Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+# 不带前导斜杠：根目录与子包都会生成 build/。`packages/hongguo_dart/build/`
+# 就是被 `/build/` 漏掉过的那一份（`flutter test` 在那里留下 unit_test_assets）。
+build/
+/coverage/
+
+# 打好的包。`build/` 会被 flutter clean 清掉，所以 release 包留一份在工程根。
+/*.apk
+
+# Symbolication related
+app.*.symbols
+
+# Obfuscation related
+app.*.map.json
+
+# Android Studio will place build artifacts here
+/android/app/debug
+/android/app/profile
+/android/app/release
+
+# 签名：密钥与密码都不进版本控制。丢了就签不出同一个包，升级只能卸载重装。
+/android/key.properties
+*.p12
+*.jks
+*.keystore
+
+# Widget Preview related
+.widget_preview/

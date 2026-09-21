@@ -1,0 +1,20 @@
+name: hongguo_dart
+description: "红果协议层：签名、ID、CENC 密钥还原与样本解密、网页解析、分类/推荐/榜单/搜索、三级取流。不碰 UI、不碰播放器。"
+version: 1.0.0
+# 内部包，只作根项目的 path 依赖，不进 pub.dev。根 pubspec.yaml 同样钉了 publish_to。
+publish_to: 'none'
+# repository: https://github.com/my_org/my_repo
+
+environment:
+  sdk: ^3.13.4
+
+# Add regular dependencies here.
+dependencies:
+  crypto: ^3.0.7
+  dio: ^5.11.1
+  pointycastle: ^4.0.0
+  # path: ^1.9.0
+
+dev_dependencies:
+  lints: ^6.0.0
+  test: ^1.25.6

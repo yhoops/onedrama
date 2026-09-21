@@ -1,0 +1,17 @@
+gradle-wrapper.jar
+/.gradle
+# Kotlin 编译器的错误日志与会话目录。眼下靠根 .gitignore 的 `*.log` 侥幸挡住，
+# 但那是碰运气——这里显式排掉。
+/.kotlin
+/captures/
+/gradlew
+/gradlew.bat
+/local.properties
+GeneratedPluginRegistrant.java
+.cxx/
+
+# Remember to never publicly share your keystore.
+# See https://flutter.dev/to/reference-keystore
+key.properties
+**/*.keystore
+**/*.jks

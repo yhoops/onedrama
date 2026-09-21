@@ -1,0 +1,126 @@
+{
+  "sm3": [
+    {
+      "input": "abc",
+      "hex": "66c7f0f462eeedd9d1f2d46bdc10e4e24167c4875cf2f7a2297da02b8f4ba8e0"
+    },
+    {
+      "input": "",
+      "hex": "1ab21d8355cfa17f8e61194831e81a8f22bec8c728fefb747ed035eb5082aa2b"
+    },
+    {
+      "input": "abcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcd",
+      "hex": "debe9ff92275b8a138604889c18e5a4d6fdb70e5387e5765293dcba39c0c5732"
+    }
+  ],
+  "splitDramaId": [
+    {
+      "identifier": "hongguo:123",
+      "sourceId": "123",
+      "ok": true
+    },
+    {
+      "identifier": "other:123",
+      "sourceId": "",
+      "ok": false
+    },
+    {
+      "identifier": "  hongguo:456  ",
+      "sourceId": "456",
+      "ok": true
+    },
+    {
+      "identifier": "789",
+      "sourceId": "789",
+      "ok": true
+    },
+    {
+      "identifier": "hongguoduanju.com:321",
+      "sourceId": "321",
+      "ok": true
+    },
+    {
+      "identifier": "hongguo:abc",
+      "sourceId": "",
+      "ok": false
+    },
+    {
+      "identifier": "hongguo:",
+      "sourceId": "",
+      "ok": false
+    },
+    {
+      "identifier": "hongguo:123456789012345678901234567890123",
+      "sourceId": "",
+      "ok": false
+    },
+    {
+      "identifier": "hongguo:hg-series-v1:555",
+      "sourceId": "555",
+      "ok": true
+    }
+  ],
+  "signRequest": [
+    {
+      "name": "with-body",
+      "rawQuery": "aid=8662\u0026device_id=700003\u0026_rticket=1773662280000",
+      "body": "{\"video_id\":\"700002\",\"content_type\":1}",
+      "hasBody": true,
+      "unix": 1773662280,
+      "headers": {
+        "X-Gorgon": "8404401c0000787e26e0d28170c17022103fad22c9e9546564cb",
+        "X-Khronos": "1773662280",
+        "X-SS-Req-Ticket": "1773662280000",
+        "X-SS-STUB": "561D94F35CF4C1AEB7A596B3A2118B86"
+      }
+    },
+    {
+      "name": "without-body",
+      "rawQuery": "app_id=8662\u0026query=%E6%80%BB%E8%A3%81\u0026count=10",
+      "body": "",
+      "hasBody": false,
+      "unix": 1773662280,
+      "headers": {
+        "X-Gorgon": "8404401c0000e9165e9dcc232d3d7022103fad22c9e954656442",
+        "X-Khronos": "1773662280",
+        "X-SS-Req-Ticket": "1773662280000"
+      }
+    }
+  ],
+  "contentKey": [
+    {
+      "name": "padding-4",
+      "spade": "lLMT9VuyEvtZshL5X7UR+0G2DvlfqSbQXakm0luuJdClrFupVrqDh4OH",
+      "key": "00112233445566778899aabbccddeeff",
+      "error": ""
+    },
+    {
+      "name": "padding-20",
+      "spade": "YXopBlV9LgZVfywGVX4EL1VhGy9VYhgvVWQeL1VlHy9Vaatspn+9XZdyoEzmALJb0Ty+SsDOdHQ=",
+      "key": "ffeeddccbbaa99887766554433221100",
+      "error": ""
+    },
+    {
+      "name": "reject-app-v2",
+      "spade": "lrMT9VuyEvtZshL5X7UR+0G2DvlfqSbQXakm0luuJdClrFupVrqNnJyzmt4=",
+      "key": "",
+      "error": "红果媒体密钥版本暂不支持"
+    }
+  ],
+  "decodePlaybackResponse": [
+    {
+      "name": "plain-json",
+      "body": "   {\"code\":0,\"data\":{\"url\":\"https://example.com/a.mp4\"}}  ",
+      "plain": "{\"code\":0,\"data\":{\"url\":\"https://example.com/a.mp4\"}}",
+      "isV2": false,
+      "error": ""
+    },
+    {
+      "name": "v2-cbc",
+      "body": "v2.AAAA4afacf7d3b4cda9358d731a795263d0a5477083016e189a5aa97df8415ceb10f.pll75kIpSVCiIZXnrwwXarlYHrBXTMGyMQfSdL1WXY78J3wOBWb677JL32zQp4OitALxJpfnsxzLQkY9TXUPRg==",
+      "plain": "{\"code\":0,\"data\":{\"url\":\"https://example.com/a.mp4\"}}",
+      "isV2": true,
+      "error": ""
+    }
+  ]
+}
