@@ -597,6 +597,28 @@ XML、`mipmap/ic_launcher_foreground` 五档 PNG、`color/ic_launcher_background
 启动后日志零异常；启动器图标放大逐像素看过——修前 `build/shots/verify-05-icon-zoom.png`、
 修后 `verify-07-icon-zoom-fixed.png`。
 
+### 4c 之后的第二次打包：**1.1.0+2**（阶段 5 的三个功能）
+
+`flutter build apk --release` → `build/app/outputs/flutter-apk/app-release.apk`，**55.2 MB**，
+同样挪一份到仓库根 `onedrama-1.1.0-release.apk`。签名与清单逐项核对过：
+
+| 项 | 值 |
+| --- | --- |
+| 签名 | `CN=onedrama, O=onedrama, C=CN`（同一把密钥，SHA-256 `77dda365…`） |
+| 版本 | `versionName=1.1.0` / `versionCode=2` |
+| SDK | minSdk 24 / targetSdk 36 / compileSdk 36 |
+| 架构 | 通用包 `arm64-v8a` `armeabi-v7a` `x86_64` |
+| 权限 | `INTERNET` / `ACCESS_NETWORK_STATE` / `WAKE_LOCK` / `DYNAMIC_RECEIVER_NOT_EXPORTED` |
+| 可调试 | **否**（清单里没有 `application-debuggable`） |
+
+**与 1.0.0 的差异只有版本号两处**——权限、SDK 级别、原生架构逐项 `aapt dump badging` 比过，
+一模一样。
+
+> ⚠️ **装之前先想一下**：手机上现在装的是 `flutter run --debug` 那个**调试包**，与 release 包
+> 签名不同，装 release 必须**先卸载**——本机的收藏 / 历史 / 观看进度、剧库快照、搜索历史会
+> 一起没（风险 6 / 7 那两条说的是同一件事）。要避免下次再发生，见「环境备注」里那条：
+> 让 debug 变体也用 release 密钥签（改 `android/app/build.gradle.kts` 四行）。
+
 ---
 
 ## 阶段 5 — 搜索记忆 / 剧库导入 / 下一集预取（设计已定，未开工）
