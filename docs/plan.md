@@ -871,6 +871,24 @@ XML、`mipmap/ic_launcher_foreground` 五档 PNG、`color/ic_launcher_background
 
 APK 本身照旧不进版本控制（已在 `.gitignore`，与密钥同一条边界）。
 
+### 阶段 6e 之后的打包：**1.3.0+4**（剧库改成只在首次自动导入）
+
+`flutter build apk --release` → **55.3 MiB**，另挪一份到仓库根 `onedrama-1.3.0-release.apk`。
+
+| 项 | 值 |
+| --- | --- |
+| 签名 | `CN=onedrama, O=onedrama, C=CN`（同一把密钥，SHA-256 `77dda365…`） |
+| 版本 | `versionName=1.3.0` / `versionCode=4` |
+| SDK | minSdk 24 / targetSdk 36 / compileSdk 36 |
+| 架构 | 通用包 `arm64-v8a` `armeabi-v7a` `x86_64` |
+| 可调试 | **否**（清单里没有 `application-debuggable`） |
+
+**与 1.2.0 的差异只有版本号两处**——权限、SDK 级别、原生架构逐项 `aapt dump badging` 比过。
+
+> **1.2.0+3 是 6e 之前的口径**：装它每次启动都会自动导入剧库（20 次签名请求 + 350 多张封面），
+> 短时间反复启动会被上游限流。要验「只在首次导入」就用 **1.3.0+4**；留 1.2.0 那份只是为了
+> 在仓库里看得出先后。
+
 ---
 
 ## 风险
