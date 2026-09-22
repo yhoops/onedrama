@@ -59,10 +59,10 @@ onedrama/
 - 网络实测：`maven.google.com` **不可达**；`services.gradle.org`、`plugins.gradle.org`、`pub.dev`、`repo.maven.apache.org`、`maven.aliyun.com` 均正常。所以 Gradle wrapper 不用换源，只补了 Maven 镜像。**镜像方案已被一次完整构建验证**。
 - `GRADLE_USER_HOME=E:\Env\gradle`（不是默认的 `~/.gradle`）。
 - 构建时若把命令接到管道里（如 `| tail`），Gradle 输出会被缓冲到进程结束才落盘——想看实时进度就直接重定向到文件，别走管道。
-- **真机取日志要用 `flutter run --release`，不要用默认的 `--debug`。** debug 变体走 debug 签名，与
-  已装的 release 包签名不同，`flutter run` 于是**先卸载再安装**——本机的收藏 / 历史 / 观看进度
-  跟着一起没了（风险 7，已实打实发生过一次）。release 变体读 `android/key.properties` 用同一把
-  onedrama 密钥，是原地升级、不卸载。
+- **真机取日志用 `--debug` 也行**（阶段 6 起 debug 与 release 共用同一把密钥，见
+  `android/app/build.gradle.kts` 的 `appSigning`）。在此之前 debug 变体走 debug 签名，与已装的
+  release 包签名不同，`flutter run` 于是**先卸载再安装**——本机的收藏 / 历史 / 观看进度跟着
+  一起没了（风险 7，实打实发生过一次）。现在两个 buildType 同签名，是原地升级、不卸载。
 - **MIUI（HyperOS）会在安装时弹确认框，屏幕锁着就等于「用户取消」**，`adb` 报
   `INSTALL_FAILED_USER_RESTRICTED: Install canceled by user`。装之前先把屏幕解开；或者
   开发者选项里打开「USB 安装」免掉这个框。
@@ -823,6 +823,29 @@ XML、`mipmap/ic_launcher_foreground` 五档 PNG、`color/ic_launcher_background
 - 榜单预热的收益（第一次进榜单从「最坏十几秒」变成秒开）要与改前对比才说得清，没做对照。
 - **低端机上的内存**：355 MB 是 8–12 GB 机器上的数，4 GB 机器没试过。
 
+### 阶段 6 之后的打包：**1.2.0+3**（阶段 6 的四个功能）
+
+`flutter build apk --release` → `build/app/outputs/flutter-apk/app-release.apk`，**55.3 MiB**
+（57,995,981 字节），同样挪一份到仓库根 `onedrama-1.2.0-release.apk`。签名与清单逐项核对过：
+
+| 项 | 值 |
+| --- | --- |
+| 签名 | `CN=onedrama, O=onedrama, C=CN`（同一把密钥，SHA-256 `77dda365…`） |
+| 版本 | `versionName=1.2.0` / `versionCode=3` |
+| SDK | minSdk 24 / targetSdk 36 / compileSdk 36 |
+| 架构 | 通用包 `arm64-v8a` `armeabi-v7a` `x86_64` |
+| 权限 | `INTERNET` / `ACCESS_NETWORK_STATE` / `WAKE_LOCK` / `DYNAMIC_RECEIVER_NOT_EXPORTED` |
+| 可调试 | **否**（清单里没有 `application-debuggable`） |
+
+**与 1.1.0 的差异只有版本号两处**——权限、SDK 级别、原生架构逐项 `aapt dump badging` 比过，
+一模一样。
+
+> ✅ **1.1.0 那一节下面的 ⚠️ 已经作废**：`build.gradle.kts` 现在让 **debug 变体也用同一把
+> release 密钥签**（那条 TODO 在本轮做了），两个 buildType 可以互相覆盖安装，不必再卸载。
+> 本次真机上验过：`adb install -r` 直接覆盖成功，收藏 / 历史 / 剧库快照全部保留。
+
+APK 本身照旧不进版本控制（已在 `.gitignore`，与密钥同一条边界）。
+
 ---
 
 ## 风险
@@ -835,7 +858,7 @@ XML、`mipmap/ic_launcher_foreground` 五档 PNG、`color/ic_launcher_background
 | 4 | App 签名协议变更 | 随时 | 无法预防，只能跟 |
 | 5 | 第三方备用域名不稳定 | 随时 | 只是兜底，挂了不影响主路 |
 | 6 | 签名密钥（`android/app/onedrama-release.p12` + `android/key.properties`）丢失 | 下次装新版本时 | 已 gitignore，**必须另外备份一份**；真丢了只能卸载重装，本地收藏 / 历史 / 观看进度一起没（设备没 root，导不回来） |
-| 7 | **`flutter run`（默认 debug）会先卸载已装的 release 包** | 每次想在真机上取日志时 | 已发生一次：本机收藏 / 历史 / 观看进度全丢。原因见下，对策是改用 `flutter run --release` |
+| 7 | **`flutter run`（默认 debug）会先卸载已装的 release 包** | 每次想在真机上取日志时 | **已关闭**（阶段 6 起两个 buildType 共用同一把密钥，实测 `adb install -r` 直接覆盖、数据保留）。曾发生过一次：本机收藏 / 历史 / 观看进度全丢 |
 
 ## 不在本计划内
 
