@@ -61,3 +61,6 @@ app.*.map.json
 # 课程报告：不进版本控制。
 /课程报告.html
 /课程设计报告/
+
+# hongguo/README.md：Go 包的接入文档，本地保留但不进版本控制。
+/hongguo/README.md

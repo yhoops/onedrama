@@ -1,5 +1,12 @@
 # onedrama
 
+[![Version](https://img.shields.io/badge/version-1.3.0%2B4-blue)](https://github.com/yhoops/onedrama)
+[![Flutter](https://img.shields.io/badge/Flutter-3.47.5-02569B?logo=flutter&logoColor=white)](https://flutter.dev)
+[![Dart](https://img.shields.io/badge/Dart-3.13.4-0175C2?logo=dart&logoColor=white)](https://dart.dev)
+[![Platform](https://img.shields.io/badge/Platform-Android-3DDC84?logo=android&logoColor=white)](https://www.android.com)
+[![Go](https://img.shields.io/badge/Go-1.24.1%2B-00ADD8?logo=go&logoColor=white)](https://go.dev)
+[![License](https://img.shields.io/badge/License-Non--Commercial-orange)](#license)
+
 **English** | [中文](README.zh-CN.md)
 
 **A personal short-drama client for Android.** Flutter UI, a thin Kotlin media plugin, and a
@@ -212,4 +219,4 @@ and video frames in the screenshots belong to their respective rights holders.
 | What a term means (Drama / Episode / Media / Heat / Rating…) | [`CONTEXT.md`](CONTEXT.md) |
 | Why a choice was made | [`docs/adr/`](docs/adr/) |
 | How it was verified end to end (with measured records of every pitfall) | [`docs/plan.md`](docs/plan.md) |
-| The upstream protocol itself (ID conventions, site constants, client API) | [`hongguo/README.md`](hongguo/README.md) |
+| The upstream protocol itself (ID conventions, site constants, client API) | [`packages/hongguo_dart/README.md`](packages/hongguo_dart/README.md) |

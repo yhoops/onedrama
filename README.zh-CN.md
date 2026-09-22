@@ -1,5 +1,12 @@
 # onedrama
 
+[![Version](https://img.shields.io/badge/version-1.3.0%2B4-blue)](https://github.com/yhoops/onedrama)
+[![Flutter](https://img.shields.io/badge/Flutter-3.47.5-02569B?logo=flutter&logoColor=white)](https://flutter.dev)
+[![Dart](https://img.shields.io/badge/Dart-3.13.4-0175C2?logo=dart&logoColor=white)](https://dart.dev)
+[![Platform](https://img.shields.io/badge/Platform-Android-3DDC84?logo=android&logoColor=white)](https://www.android.com)
+[![Go](https://img.shields.io/badge/Go-1.24.1%2B-00ADD8?logo=go&logoColor=white)](https://go.dev)
+[![License](https://img.shields.io/badge/License-Non--Commercial-orange)](#许可)
+
 [English](README.md) | **中文**
 
 自用短剧客户端。Flutter 画 UI，Kotlin 侧只持有播放器与纹理，协议层是上游协议的 Dart 重写。
@@ -190,4 +197,4 @@ Go 和 Dart 各跑一遍解析并断言两端输出相等；签名、SM3、密�
 | 某个词到底指什么（Drama / Episode / Media / Heat / Rating…） | [`CONTEXT.md`](CONTEXT.md) |
 | 为什么是这么选的 | [`docs/adr/`](docs/adr/) |
 | 怎么一路验过来的（含每个坑的实测记录） | [`docs/plan.md`](docs/plan.md) |
-| 上游协议本身的细节（ID 约定、站点常量、Client API） | [`hongguo/README.md`](hongguo/README.md) |
+| 上游协议本身的细节（ID 约定、站点常量、Client API） | [`packages/hongguo_dart/README.md`](packages/hongguo_dart/README.md) |
