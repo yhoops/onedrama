@@ -85,10 +85,11 @@ String? importToast(LibraryImportReport report, {required int libraryCount}) {
   return parts.join(' · ');
 }
 
-/// 剧库导入。见 `docs/adr/0008`。
+/// 剧库导入。见 `docs/adr/0008` 与 `docs/adr/0012`。
 ///
-/// 每次启动自动跑一遍（`main.dart` 里第一帧之后），设置「剧库与存储 → 更新剧库」手动
-/// 再跑一次。范围很小：只负责「把四个标签的头部若干页换进本地快照」，不碰 UI。
+/// **只在首次进入 App 时自动跑一遍**（`main.dart` 里第一帧之后，判据见
+/// [startupImportDone]），之后都由设置「剧库与存储 → 更新剧库」手动触发。范围很小：
+/// 只负责「把四个标签的头部若干页换进本地快照」，不碰 UI。
 ///
 /// 它同时是**剧库部数与「本次新增」**的来源——那两个数只算分类标签，口径见
 /// `docs/adr/0010`。
@@ -107,6 +108,7 @@ class LibraryImporter {
   static const int _coverConcurrency = 4;
 
   static const String _keyImportedAt = 'library_imported_at';
+  static const String _keyStartupImportDone = 'library_startup_import_done';
 
   final HongguoClient client;
   final AppDatabase database;
@@ -131,6 +133,19 @@ class LibraryImporter {
 
   /// 忘掉「上次导入」的时间戳。清缓存时一起调——快照都没了，再说「3 分钟前更新」是骗人。
   Future<void> forgetImportedAt() => prefs.remove(_keyImportedAt);
+
+  /// 「首次进入 App 时那一轮自动导入」是否已经跑过。
+  ///
+  /// **与 [lastImportedAt] 是两件事，刻意分开记**：
+  /// - [lastImportedAt] 只在分类标签成功时才推进，它是给用户看「这份数据多旧」的；
+  /// - 这个只要跑过就置位，**失败也算跑过**——否则每次启动都会再试一轮，而「按过清除缓存
+  ///   之后又被自动拉一份」正是这条口径要避免的（用户清缓存就是为了腾空间）。
+  ///
+  /// 所以 [forgetImportedAt] **不碰它**，清缓存只清快照与时间戳。
+  bool startupImportDone() => prefs.getBool(_keyStartupImportDone) ?? false;
+
+  Future<void> markStartupImportDone() =>
+      prefs.setBool(_keyStartupImportDone, true);
 
   /// 跑一遍。
   ///

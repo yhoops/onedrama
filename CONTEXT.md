@@ -61,7 +61,7 @@ A Drama kept for later, whether or not it was watched. Local to this device; not
 _Avoid_: 追剧, collection, watchlist, bookmark
 
 **Library Snapshot**:
-A local copy of the Drama catalog — the four home tabs' first five pages each, cover images included. Rewritten wholesale on every app start. Separate from [Favorite] and [Watch Progress], which it never touches.
+A local copy of the Drama catalog — the four home tabs' first five pages each, cover images included. Rewritten wholesale on each update: once automatically on the very first launch, thereafter only when the user asks for one (see `docs/adr/0012`). Separate from [Favorite] and [Watch Progress], which it never touches.
 _Avoid_: 剧库 (alone), 缓存, offline library. 「短剧库」 names the page; this names the data.
 
 **Library Count**:
