@@ -348,7 +348,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                   label: keyword,
                   onTap: () => _runSearch(keyword),
                   // 长按删单条。**没有可见的删除键**是刻意的：参考图里没有搜索页
-                  // （`参考的前端页面/` 六张都没有），这一屏是自由设计，删除压在长按上、
+                  // （六张参考图都没有），这一屏是自由设计，删除压在长按上、
                   // 整块清空交给标题右侧那个「清空」。删错了有撤销。
                   onLongPress: () => _forget(keyword),
                 ),

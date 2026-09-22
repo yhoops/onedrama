@@ -57,3 +57,7 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# 课程报告：不进版本控制。
+/课程报告.html
+/课程设计报告/

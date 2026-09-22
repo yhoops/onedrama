@@ -25,7 +25,6 @@
 *.jks binary
 *.keystore binary
 
-# 语言统计：这两处不是源码。不标的话，8 张设计参考截图与 42 KB 的 plan.md
-# 会把 Dart 的占比压下去，落地页的语言条会读错这个仓库是什么写的。
-参考的前端页面/** linguist-documentation
+# 语言统计：docs/ 不是源码。不标的话，42 KB 的 plan.md 会把 Dart 的占比压下去，
+# 落地页的语言条会读错这个仓库是什么写的。
 docs/** linguist-documentation
