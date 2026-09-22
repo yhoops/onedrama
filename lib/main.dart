@@ -45,6 +45,9 @@ class _OneDramaAppState extends ConsumerState<OneDramaApp> {
       if (!mounted) return;
       // 启动这一轮失败不在用户面前冒任何东西：首页照常走网络，下次启动再试。
       unawaited(ref.read(libraryImporterProvider).run());
+      // 榜单预热。走 web 主机（免签名），与上面那轮导入走的 app 主机不是同一路，
+      // 所以并发跑不抢接口——它让「第一次进榜单」不用等网络。见 `data/ranking_warmer.dart`。
+      unawaited(ref.read(rankingWarmerProvider).run());
     });
   }
 

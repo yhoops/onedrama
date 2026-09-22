@@ -15,8 +15,12 @@ bool isCacheableRequest(RequestOptions options) {
         path.startsWith('/novel/player/video_detail/');
   }
   if (host.endsWith('hongguoduanju.com')) {
+    // `/rank/` **刻意不在**这里：红果榜单约一半请求返回「新渲染」那版页面——HTTP 200
+    // 但内容里压根没有榜单数据（见 `parseRanking`）。而下面 `_settle` 只看
+    // `statusCode == 200` 就入缓存，于是那份坏 HTML 被钉住五分钟，
+    // `BoardFeed._fetchWithRetry` 的后五次重试全部命中它、必然失败——重试只在非 200
+    // 上才有效。不缓存之后重试才是真的在重试（六次后约 98%）。
     return path.startsWith('/search/') ||
-        path.startsWith('/rank/') ||
         path.startsWith('/category/') ||
         path.startsWith('/detail') ||
         path.startsWith('/incent_resource/suggestion');

@@ -55,14 +55,22 @@ android {
         }
     }
 
+    // **两个 buildType 用同一把签名。** 不这么做的话 debug 与 release 是两个签名，互相
+    // 覆盖安装会 `INSTALL_FAILED_UPDATE_INCOMPATIBLE`，只能先卸载——而卸载会把收藏 /
+    // 观看进度一起清掉。这条已经踩过一次（`docs/plan.md` 风险 7）。
+    val appSigning =
+        if (hasReleaseKey) {
+            signingConfigs.getByName("release")
+        } else {
+            signingConfigs.getByName("debug")
+        }
+
     buildTypes {
         release {
-            signingConfig =
-                if (hasReleaseKey) {
-                    signingConfigs.getByName("release")
-                } else {
-                    signingConfigs.getByName("debug")
-                }
+            signingConfig = appSigning
+        }
+        debug {
+            signingConfig = appSigning
         }
     }
 }

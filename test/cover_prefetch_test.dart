@@ -62,4 +62,45 @@ void main() {
       expect(prefetcher.debugQueued, ['u2', 'u3', 'u4', 'u1']);
     });
   });
+
+  group('启动预热', () {
+    testWidgets('warmFrom(0) 从第一张起热满一窗——含下标 0 本身', (tester) async {
+      // 这条是它与 `advanceTo` 的关键差别：`advanceTo` 取的是「前缘**之后**」，传 0 会被
+      // 理解成「构建到了第 0 条」而**跳过首屏第一张**。启动预热时还没有任何东西被构建过，
+      // 漏掉第一张就是漏掉用户第一眼看的那张。
+      final prefetcher = CoverPrefetcher(
+        memCacheWidth: gridCoverWidth,
+        window: CoverPrefetcher.firstScreen,
+        concurrent: 2,
+      );
+
+      prefetcher.warmFrom(0, (index) => 'u$index');
+      expect(prefetcher.debugQueued, ['u0', 'u1', 'u2', 'u3', 'u4', 'u5']);
+
+      // 与滚动预取混用：去重是共享的，已经排过的不再排一次。
+      prefetcher.advanceTo(3, (index) => index <= 9 ? 'u$index' : '');
+      expect(prefetcher.debugQueued, [
+        'u0',
+        'u1',
+        'u2',
+        'u3',
+        'u4',
+        'u5',
+        'u6',
+        'u7',
+        'u8',
+        'u9',
+      ]);
+    });
+
+    testWidgets('快照比一屏还短时越界跳过，不排空串', (tester) async {
+      final prefetcher = CoverPrefetcher(memCacheWidth: gridCoverWidth);
+      prefetcher.warmFrom(0, (index) => index < 2 ? 'u$index' : '');
+      expect(prefetcher.debugQueued, ['u0', 'u1']);
+    });
+
+    test('预热的窗口比滚动预取小——只为「第一眼」，不是一屏半', () {
+      expect(CoverPrefetcher.firstScreen, lessThan(CoverPrefetcher.defaultWindow));
+    });
+  });
 }

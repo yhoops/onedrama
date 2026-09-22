@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -402,24 +404,54 @@ class _StorageSectionState extends ConsumerState<_StorageSection> {
   /// 上次导入剧库的时间。异步读的，所以和上面两个一起放进状态。
   DateTime? _importedAt;
 
+  /// 剧库部数：分类标签快照里不同剧 ID 的数量。见 `CONTEXT.md` 的 Library Count。
+  int _libraryCount = 0;
+
+  /// 抓住导入器本身而不是每次 `ref.read`——dispose 里要用它摘监听，
+  /// 而那时候已经不该碰 `ref` 了。
+  LibraryImporter? _importer;
+
   bool _busy = false;
 
   @override
   void initState() {
     super.initState();
+    final importer = ref.read(libraryImporterProvider);
+    _importer = importer;
+    // 启动那一轮导入跑完时，这一行也得跟着变。
+    //
+    // 它的进度走同一个 notifier，所以「在跑」那一段是实时的；但跑完之后显示的部数与
+    // 时间戳来自 `_refreshUsage()` 取的快照、**不是实时的**。用户正停在设置页时不给这
+    // 一下，那一行会一直停在旧数字上——而启动那一轮恰恰是最常见的更新路径。
+    importer.progress.addListener(_onImportProgress);
     _refreshUsage();
   }
 
+  @override
+  void dispose() {
+    _importer?.progress.removeListener(_onImportProgress);
+    super.dispose();
+  }
+
+  /// 导入从「在跑」变回「没在跑」＝这一轮结束了。
+  void _onImportProgress() {
+    if (_importer?.progress.value != null) return;
+    unawaited(_refreshUsage());
+  }
+
   Future<void> _refreshUsage() async {
+    // `ref` 一律在第一个 await 之前取完：中间任何一个 await 都可能跨过 dispose。
+    final database = ref.read(databaseProvider);
     final usage = await episodeCacheUsage();
     final covers = await coverCacheSize();
-    if (mounted) {
-      setState(() {
-        _usage = usage;
-        _coverBytes = covers;
-        _importedAt = ref.read(libraryImporterProvider).lastImportedAt();
-      });
-    }
+    final count = await database.libraryCount();
+    if (!mounted) return;
+    setState(() {
+      _usage = usage;
+      _coverBytes = covers;
+      _libraryCount = count;
+      _importedAt = _importer?.lastImportedAt();
+    });
   }
 
   void _toast(String message) {
@@ -442,22 +474,27 @@ class _StorageSectionState extends ConsumerState<_StorageSection> {
   }
 
   /// 手动跑一遍剧库导入。启动时已经自动跑过一次，这里是「我就要现在更新」。
+  ///
+  /// 文案交给 [importToast]：首次导入不弹（那时「新增」就是全部），部分失败要点明。
+  /// **只有这一轮弹** —— 启动那一轮跑完是静默的，一进 App 就冒东西出来太吵。
   Future<void> _importLibrary() async {
     final report = await ref.read(libraryImporterProvider).run();
     await _refreshUsage();
     if (!mounted) return;
-    final parts = <String>['已导入 ${report.dramas} 部剧'];
-    if (report.failedTabs > 0) {
-      parts.add('${report.failedTabs} 个标签失败，保留了旧数据');
-    }
-    if (report.coversWarmed > 0) parts.add('封面 ${report.coversWarmed} 张');
-    _toast(parts.join('，'));
+    final message = importToast(report, libraryCount: _libraryCount);
+    if (message != null) _toast(message);
   }
 
-  /// 那一行右侧的静态文案：「3 分钟前更新」/「尚未更新」。
-  String _updatedLabel() {
+  /// 那一行右侧的静态文案：「267 部 · 3 分钟前」/「尚未更新」。
+  ///
+  /// 部数占了原来时间戳的位置，但**时间戳没丢**：快照每次启动都重写，平时它几乎总是
+  /// 「刚刚」；只有导入连续失败时才会停在两天前，而那正是最需要知道的时候。
+  String _libraryLabel() {
+    if (_libraryCount == 0) return '尚未更新';
     final at = _importedAt;
-    return at == null ? '尚未更新' : '${_relativeTime(at)}更新';
+    return at == null
+        ? '$_libraryCount 部'
+        : '$_libraryCount 部 · ${_relativeTime(at)}';
   }
 
   @override
@@ -473,12 +510,13 @@ class _StorageSectionState extends ConsumerState<_StorageSection> {
           icon: Icons.library_add_outlined,
           label: '更新剧库',
           onTap: _busy ? null : () => _run(_importLibrary),
-          // 在跑就显示进度，跑完显示「3 分钟前更新」。启动时那一轮也会走到这里——
-          // 进度走 ValueNotifier，所以两条路径都能看见同一份状态。
+          // 在跑就显示进度，跑完显示「267 部 · 3 分钟前」。启动时那一轮也会走到这里——
+          // 进度走 ValueNotifier，所以两条路径都能看见同一份状态；而跑完之后要刷新
+          // 部数与时间戳，靠的是 `_onImportProgress` 那个监听。
           trailing: ValueListenableBuilder<LibraryImportProgress?>(
             valueListenable: ref.read(libraryImporterProvider).progress,
             builder: (context, progress, _) => Text(
-              progress?.label ?? _updatedLabel(),
+              progress?.label ?? _libraryLabel(),
               style: TextStyle(fontSize: 14, color: palette.secondaryText),
             ),
           ),

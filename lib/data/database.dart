@@ -4,6 +4,8 @@ import 'package:hongguo_dart/hongguo_dart.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
+import 'library_tabs.dart';
+
 /// 本地库：剧快照、收藏、观看进度。
 ///
 /// 为什么是 sqflite 而不是 drift：见 `docs/adr/0006`——drift 现在要求
@@ -299,6 +301,36 @@ class AppDatabase {
       for (final row in rows)
         _dramaOfPayload(row['payload'] as String?, row['drama_id'] as String),
     ];
+  }
+
+  /// 剧库部数：分类标签快照里**不同**剧 ID 的数量。见 `CONTEXT.md` 的 Library Count。
+  ///
+  /// 用 `COUNT(DISTINCT drama_id)` 而不是行数：同一部剧会同时出现在综合与漫剧里，
+  /// 按行数算会把它数两遍，而「剧库里有多少部剧」问的不是行数。
+  Future<int> libraryCount() async {
+    final tabs = categoryTabIndexes;
+    if (tabs.isEmpty) return 0;
+    final placeholders = List.filled(tabs.length, '?').join(',');
+    final rows = await _db.rawQuery(
+      'SELECT COUNT(DISTINCT drama_id) AS n FROM library_entries '
+      'WHERE tab IN ($placeholders)',
+      tabs,
+    );
+    return (rows.first['n'] as int?) ?? 0;
+  }
+
+  /// 一个标签快照里的剧 ID。导入器算「本次新增」用它——只读 ID，不解 payload。
+  ///
+  /// 必须在 [replaceLibraryTab] **之前**读：那一手是先 delete 再 insert，替换之后就地
+  /// 问不出「上次有哪些」了。
+  Future<Set<String>> libraryTabIds(int tab) async {
+    final rows = await _db.query(
+      'library_entries',
+      columns: const ['drama_id'],
+      where: 'tab = ?',
+      whereArgs: [tab],
+    );
+    return <String>{for (final row in rows) row['drama_id'] as String};
   }
 
   /// 清掉整份剧库快照，返回删掉的行数。

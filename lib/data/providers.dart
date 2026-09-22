@@ -6,6 +6,7 @@ import 'database.dart';
 import 'library_importer.dart';
 import 'network.dart';
 import 'ranking_cache.dart';
+import 'ranking_warmer.dart';
 import 'search_history.dart';
 import 'settings.dart';
 
@@ -98,6 +99,15 @@ final webSocialProvider = FutureProvider.family<SocialInfo, String>(
 /// 榜单的「上次成功结果」。落盘，所以冷启动也能立刻显示上次的榜单。
 final rankingCacheProvider = Provider<RankingCache>(
   (ref) => RankingCache(ref.watch(settingsStoreProvider).prefs),
+);
+
+/// 榜单的启动预热。见 [RankingWarmer]——它只把四个榜的第 1 页刷进上面那份缓存，
+/// 榜单页本身一行都不用改。
+final rankingWarmerProvider = Provider<RankingWarmer>(
+  (ref) => RankingWarmer(
+    client: ref.watch(hongguoClientProvider),
+    cache: ref.watch(rankingCacheProvider),
+  ),
 );
 
 /// 搜索历史（搜过的词）。改动立刻落盘。

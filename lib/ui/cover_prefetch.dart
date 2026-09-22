@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/widgets.dart';
 
+import '../data/cover_cache.dart';
+
 /// 封面预取：把「马上要滑到」的那一屏封面提前解码进 Flutter 的内存 `ImageCache`。
 ///
 /// **为什么必须热到内存，而不是只热磁盘**：`CachedNetworkImage` 底下的 `octo_image`
@@ -36,6 +38,13 @@ class CoverPrefetcher {
 
   /// 同时在飞的请求数。堆太多会在几帧里塞满解码任务，反而把滚动卡住。
   static const int defaultConcurrent = 3;
+
+  /// 「切过去第一眼」大约几张：2 列网格在 360dp 宽的屏上，可见区约 4–6 张。
+  ///
+  /// **启动预热用这个，不用 [defaultWindow] 那个 12**：预热只为第一眼，超出首屏的那些
+  /// 切过去也不会立刻看到，热了是白占内存——而每张按 [memCacheWidth] 解出来约
+  /// 0.33–1.32 MB。滚动要看更多时，`_FeedViewState` 自己那个 12 窗口的预取器会接手。
+  static const int firstScreen = 6;
 
   /// 解码宽度。**必须与同一处封面的 `DramaCover.memCacheWidth` 相等**，否则缓存键不同。
   final int memCacheWidth;
@@ -79,6 +88,15 @@ class CoverPrefetcher {
     });
   }
 
+  /// 从第 [first] 张起热一个窗口。
+  ///
+  /// **启动预热用它**：那时还没有任何东西被构建过，[advanceTo] 的「前缘之后」无从谈起
+  /// （传 0 会被理解成「构建到了第 0 条」而跳过首屏第一张）。滚动预取仍然走 [advanceTo]。
+  ///
+  /// 同一个实例上两种入口可以混用：地址级去重（[_enqueued]）是共享的。
+  void warmFrom(int first, String Function(int index) urlAt) =>
+      advanceTo(first - 1, urlAt);
+
   /// 页面走了就停。已经在飞的那几张**不取消**——它们本来就是要热的，让它跑完更省事；
   /// 这里只是不再往里加新的。
   void dispose() {
@@ -114,7 +132,11 @@ class CoverPrefetcher {
   /// 所以热过的那张仍然会命中。
   Future<void> _warm(String url) {
     final stream = ResizeImage(
-      CachedNetworkImageProvider(url),
+      // `cacheManager` 必须与 `DramaCover` 那个一致（见 `data/cover_cache.dart`）——
+      // 否则磁盘那一层读的不是同一份。它**不进内存 `ImageCache` 的键**
+      // （`CachedNetworkImageProvider.==` 不比它），所以下面那条「照抄同一个构造」的
+      // 规则不受影响。
+      CachedNetworkImageProvider(url, cacheManager: CoverCacheManager()),
       width: memCacheWidth,
     ).resolve(ImageConfiguration.empty);
 

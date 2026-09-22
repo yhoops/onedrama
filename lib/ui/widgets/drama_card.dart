@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:hongguo_dart/hongguo_dart.dart';
 
+import '../../data/cover_cache.dart';
 import '../theme.dart';
 import 'pressable.dart';
 
@@ -155,6 +156,13 @@ class DramaCover extends StatelessWidget {
     if (url.isEmpty) return const _CoverFallback();
     return CachedNetworkImage(
       imageUrl: url,
+      // 四处必须共用同一个 manager（见 `data/cover_cache.dart`）：磁盘缓存的对象数
+      // 上限是自己定的，各开各的会让预热热到别的缓存里去。
+      //
+      // 传它**不影响内存 `ImageCache` 的键**——`CachedNetworkImageProvider` 的 `==`
+      // 只比 url/scale/maxWidth/maxHeight，`cacheManager` 不参与
+      // （`cached_network_image_provider.dart`）。所以预热那边照抄同一个构造仍然命中。
+      cacheManager: CoverCacheManager(),
       fit: fit,
       // 限一下解码宽度：海报在 2 列网格里用不到原始分辨率，省内存。
       memCacheWidth: memCacheWidth,
@@ -202,7 +210,10 @@ void openDrama(BuildContext context, Drama drama, {String? heroTag}) {
   if (drama.cover.isNotEmpty) {
     precacheImage(
       ResizeImage(
-        CachedNetworkImageProvider(drama.cover),
+        CachedNetworkImageProvider(
+          drama.cover,
+          cacheManager: CoverCacheManager(),
+        ),
         width: gridCoverWidth,
       ),
       context,

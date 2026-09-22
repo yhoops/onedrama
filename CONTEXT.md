@@ -64,6 +64,14 @@ _Avoid_: 追剧, collection, watchlist, bookmark
 A local copy of the Drama catalog — the four home tabs' first five pages each, cover images included. Rewritten wholesale on every app start. Separate from [Favorite] and [Watch Progress], which it never touches.
 _Avoid_: 剧库 (alone), 缓存, offline library. 「短剧库」 names the page; this names the data.
 
+**Library Count**:
+How many distinct Dramas the [Library Snapshot] holds, counting only the three category tabs (真人剧 / 漫剧 / AI剧). The 综合 tab is excluded: it is a recommendation stream whose contents change on every fetch, so counting it would make the number move with nothing changing upstream.
+_Avoid_: 总剧数, 库大小, row count
+
+**Newly Added**:
+The Dramas in the current [Library Snapshot]'s category tabs that were absent from the previous one — what upstream put online since the last update. Because those tabs are ordered by 上架时间, this is a head-of-list measure: new Dramas enter the first five pages and older ones drop off the end. Never counts 综合, for the same reason as [Library Count].
+_Avoid_: 更新数, delta, 变化量
+
 **Search History**:
 The keywords actually searched on this device, newest first, at most twenty. Does not include the home page's topic shortcuts — those are browsing, not searching.
 _Avoid_: 搜索记忆, 最近搜索 (as the domain name), recent queries

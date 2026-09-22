@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -154,6 +156,13 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
   late final List<LibraryFeed> _feeds;
   int _tab = 0;
 
+  /// 启动预热另外三个标签的首屏封面用的。窗口只有一屏，与 `_FeedViewState` 里那个
+  /// 12 窗口的滚动预取器分工不同——见 [CoverPrefetcher.firstScreen]。
+  late final CoverPrefetcher _warm = CoverPrefetcher(
+    memCacheWidth: gridCoverWidth,
+    window: CoverPrefetcher.firstScreen,
+  );
+
   @override
   void initState() {
     super.initState();
@@ -167,11 +176,62 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
         ),
     ];
     _feeds.first.ensureLoaded();
+
+    // 启动后预热另外三个标签的首屏封面。
+    //
+    // **首访那一下卡顿不是数据**：实测一个标签 86 行、94 KB 的 payload 解析成 Drama
+    // 只要 2–5 ms（JIT 上界，真机 AOT 更快），读库那次也是异步的。卡的是封面——约
+    // 4–6 张海报要在 260 ms 的转场里走完「磁盘读 → 解码 → 显存上传」，还要叠 220 ms
+    // 淡入。所以把这段活挪到启动后来干：那时用户还没开始交互，是最便宜的窗口。热过的
+    // 封面连淡入都不放（`octo_image` 的 `wasSynchronouslyLoaded` 分支），切过去直接出图。
+    //
+    // **必须先 `ensureLoaded` 再热**：`LibraryFeed` 会把新拉到的那一页插到最前
+    // （见 [absorbDramas]），只按快照热的话，恰好在新剧上架时热的会是被挤下去的旧那几张。
+    // 先加载 feed 的**净请求代价约 0**——它拉的第一页会被 TTL 缓存住，导入器随后拉同一页
+    // 时直接命中（`network.dart` 的白名单里有 `/reading/distribution/category/`）。
+    //
+    // 推到第一帧之后：它要解码几十张图，绝不能挡启动。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_warmOtherTabs());
+    });
+  }
+
+  /// 按标签下标顺序**串行**热另外三个标签的首屏。
+  ///
+  /// 串行是刻意的：同时最多只有 `CoverPrefetcher` 自己那 3 张在飞，而当前标签（综合）
+  /// 的首屏要抢同一批解码与显存上传——让它先赢。顺序即下标顺序，也就是最可能被切到的
+  /// 「真人剧」排在最前。
+  Future<void> _warmOtherTabs() async {
+    final startedAt = DateTime.now();
+    final queued = <int, int>{};
+    for (var index = 0; index < _feeds.length; index++) {
+      // 用户可能已经切过去了：那一页的封面本来就在画，再热一遍是白费。
+      if (index == _tab) continue;
+      final feed = _feeds[index];
+      await feed.ensureLoaded();
+      if (!mounted) return;
+      final dramas = feed.dramas;
+      queued[index] = dramas
+          .take(CoverPrefetcher.firstScreen)
+          .where((drama) => drama.cover.isNotEmpty)
+          .length;
+      _warm.warmFrom(0, (at) => at < dramas.length ? dramas[at].cover : '');
+    }
+    // 刻意留的取证痕迹（同 `[library]` / `[ranking]` 那两套）：预热到底排了多少张。
+    // **不能只看内存**——封面源图是 400px 宽的 HEIC（URL 里 `aifit:400:0`），
+    // `gridCoverWidth` 那个 480 比源图还大、缩不下来，所以每张约 1.14 MB；
+    // 而 `dumpsys meminfo` 对 Impeller 的纹理记账并不完整，量不出这个数。
+    debugPrint(
+      '[warm] 首屏预热排队 · 逐标签 '
+      '${queued.entries.map((e) => '${e.key}:${e.value}').join(' ')}'
+      ' · ${DateTime.now().difference(startedAt).inMilliseconds}ms',
+    );
   }
 
   @override
   void dispose() {
     _pages.dispose();
+    _warm.dispose();
     for (final feed in _feeds) {
       feed.dispose();
     }
@@ -610,7 +670,8 @@ class _FeedView extends StatefulWidget {
   State<_FeedView> createState() => _FeedViewState();
 }
 
-class _FeedViewState extends State<_FeedView> {
+class _FeedViewState extends State<_FeedView>
+    with AutomaticKeepAliveClientMixin {
   final ScrollController _scroll = ScrollController();
 
   /// 封面预取。网格海报走 [gridCoverWidth]——**必须与 [DramaCard] 里那张图给的值一致**，
@@ -652,8 +713,22 @@ class _FeedViewState extends State<_FeedView> {
     return index < dramas.length ? dramas[index].cover : '';
   }
 
+  /// 切标签时不销毁这一页。
+  ///
+  /// `PageView` 默认把滑走的页整个 dispose，切回来整棵树重建——封面重走「磁盘读 →
+  /// 解码 → `DramaCover` 那 220ms 淡入」，那一下闪就是它。保住这一页之后封面不再重
+  /// 解码，滚动位置也留住了（底部三页已经是这个口径，见 `home_shell.dart`）。
+  ///
+  /// 代价：四个标签各自的最后一屏都留在内存里，约等于四倍的单标签开销。每张网格封面
+  /// 按 `gridCoverWidth` 解出来约 1.32 MB（见 `drama_card.dart`），量级几十 MB——
+  /// 而 `ImageCache` 默认上限是 100 MB，这个数**真机上要量**。
+  @override
+  bool get wantKeepAlive => true;
+
   @override
   Widget build(BuildContext context) {
+    // `AutomaticKeepAliveClientMixin` 要求；不调的话 wantKeepAlive 不生效。
+    super.build(context);
     final feed = widget.feed;
 
     return RefreshIndicator(
