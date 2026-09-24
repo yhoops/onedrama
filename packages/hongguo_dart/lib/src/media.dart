@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'client.dart';
@@ -15,6 +16,7 @@ class Media {
     this.quality = 0,
     this.width = 0,
     this.height = 0,
+    this.backupUrls = const <String>[],
     this.variants = const <Media>[],
   });
 
@@ -39,13 +41,46 @@ class Media {
   final int width;
   final int height;
 
+  /// **同一档位的备选地址**，按优先级排。`url` 是主地址，这里是它的备胎。
+  ///
+  /// 实测现在每档多给一个，而且落在**不同的 CDN 主机**上（主地址
+  /// `v5-ex-reading-video-a.qznovelvod.com`，备胎 `v5-reading-video-c.qznovelvod.com`），
+  /// 所以它值得留着——主地址被墙或被限时能顶上。上游目前只给 `backup_url`；
+  /// `backup_url_1` / `backup_url_2` / `backup_urls` / `url_list` 一并收着，以防它哪天扩。
+  ///
+  /// **它和 [variants] 不是一回事**：这里是同一档位的不同地址，[variants] 是不同档位。
+  /// 别把备胎塞进 [variants]——那会让画质面板每个档位冒出重复项。
+  final List<String> backupUrls;
+
   /// 同一集的其他画质。切换画质时本地换 URL + 密钥即可，不必重新取流。
+  ///
+  /// 每一项自己也可能带 [backupUrls]。
   final List<Media> variants;
 
   bool get isEncrypted => cencKey != null && cencKey!.isNotEmpty;
 
   /// 显示用的宽高比。上游没给尺寸时是 null——调用方应当退回「铺满」而不是猜一个。
   double? get aspectRatio => width > 0 && height > 0 ? width / height : null;
+
+  /// `url` 加上备选地址，按尝试顺序排。取流后的「定地址」用它。
+  List<String> get allUrls => <String>[url, ...backupUrls];
+
+  /// 换一个地址，其余字段照搬。定地址时用它把胜出的备选写回 [url]。
+  Media withUrl(String address) => Media(
+    url: address,
+    referer: referer,
+    duration: duration,
+    cencKey: cencKey,
+    quality: quality,
+    width: width,
+    height: height,
+    // 胜出的那个地址从备选里摘掉，其余的留着——免得下一次又去试一遍同一个。
+    backupUrls: <String>[
+      for (final candidate in allUrls)
+        if (candidate != address) candidate,
+    ],
+    variants: variants,
+  );
 }
 
 final RegExp _qualityNumber = RegExp(r'[0-9]+');
@@ -64,10 +99,69 @@ bool isHttpMediaUrl(String raw) {
   return true;
 }
 
+/// 从 App 取流响应的一档里收集可用的媒体地址，**主地址在前**。
+///
+/// 对照参考实现的 `hongguoMediaAddresses`：按 `main_url` / `backup_url` /
+/// `backup_url_1` / `backup_url_2` / `backup_urls` / `url_list` 的顺序收，
+/// 数组会被展开；不是 http(s) 的字符串当成 base64 解一次再判。去重后返回。
+///
+/// 实测现在每档只有 `main_url` + 一个 `backup_url`（不同 CDN 主机），后四个 key
+/// 在响应里根本不存在——一并收着是为了上游哪天扩了不用再改这里。
+List<String> mediaAddresses(Map<String, dynamic> row) {
+  final addresses = <String>[];
+  final seen = <String>{};
+
+  void add(Object? value) {
+    if (value is String) {
+      var address = value.trim();
+      if (address.length > 8192) return;
+      if (!isHttpMediaUrl(address)) {
+        final decoded = _decodeAddressBase64(address);
+        if (decoded == null) return;
+        address = utf8.decode(decoded, allowMalformed: true).trim();
+      }
+      if (isHttpMediaUrl(address) && seen.add(address)) addresses.add(address);
+      return;
+    }
+    if (value is List) {
+      for (final item in value) {
+        add(item);
+      }
+    }
+  }
+
+  for (final key in const [
+    'main_url',
+    'backup_url',
+    'backup_url_1',
+    'backup_url_2',
+    'backup_urls',
+    'url_list',
+  ]) {
+    add(row[key]);
+  }
+  return addresses;
+}
+
+/// 解 base64 地址。对照参考的 `decodeHongguoBase64`：先按标准（带 padding）解，
+/// 不行再当无 padding 的解一次。都不行返回 null——调用方跳过这个地址，不报错。
+Uint8List? _decodeAddressBase64(String value) {
+  final standard = decodeBase64(value);
+  if (standard != null) return standard;
+  try {
+    return base64.decode(base64.normalize(value.trim()));
+  } on FormatException {
+    return null;
+  }
+}
+
 /// 从 App 取流响应的 `video_model` 里选一路媒体。
 ///
 /// 对照 Go 的 `SelectAppMedia`：跳过 `bytevc2`，同分辨率优先 H.264，有 `spade_a`
 /// 时还原出 CENC 密钥。
+///
+/// **比 Go 多的地方**：那一档的 `main_url` 之外的地址（`backup_url` 等）会收进
+/// [Media.backupUrls]，而不是丢掉。Go 那边只看 `main_url`。
 Media selectAppMedia(Map<String, dynamic>? model) {
   if (model == null || model.isEmpty) {
     throw HongguoRequestException('红果 App 未返回兼容的媒体，已跳过不支持的编码');
@@ -110,8 +204,8 @@ Media selectAppMedia(Map<String, dynamic>? model) {
       continue;
     }
 
-    final address = mapString(row, const ['main_url']);
-    if (address.length > 8192 || !isHttpMediaUrl(address)) continue;
+    final addresses = mediaAddresses(row);
+    if (addresses.isEmpty) continue;
 
     Uint8List? cencKey;
     final encryption = nestedMap(row['encrypt_info'], const <String>[]);
@@ -143,13 +237,14 @@ Media selectAppMedia(Map<String, dynamic>? model) {
     }
 
     final media = Media(
-      url: address,
+      url: addresses.first,
       referer: mediaReferer,
       duration: duration,
       cencKey: cencKey,
       quality: height,
       width: width,
       height: pixelHeight,
+      backupUrls: addresses.skip(1).toList(),
     );
 
     var score = height * 10;
@@ -177,6 +272,8 @@ Media selectAppMedia(Map<String, dynamic>? model) {
       quality: selected.quality,
       width: selected.width,
       height: selected.height,
+      // 选中的那一档的备胎要跟着上浮——不然只在 variants 里，最外层就丢了。
+      backupUrls: selected.backupUrls,
       variants: variants,
     );
   }

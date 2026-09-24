@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:dio/dio.dart';
+import 'package:hongguo_dart/hongguo_dart.dart';
 
 /// 哪些请求可以进 TTL 缓存。
 ///
@@ -132,10 +133,34 @@ class CoalescingCacheInterceptor extends Interceptor {
       }
     }
 
-    // 只缓存成功响应——把错误缓存下来会让一次抖动持续五分钟。
-    if (response != null && response.statusCode == 200) {
+    // 只缓存**真的有内容**的成功响应。
+    //
+    // 「看状态码就行」是不够的：红果的签名接口会返回 **HTTP 200 + 空响应体**——App
+    // 详情 `/novel/player/video_detail/v1/` 现在就是这样。空体进了缓存就会被钉住
+    // 五分钟，而重试只在非 200 上才有效 → 这五分钟里每次重试都命中同一份空体，必然失败。
+    // 业务码非 0 的响应同理：那是「上游说这次不行」，缓存它等于把一次抖动变成五分钟。
+    if (response != null && response.statusCode == 200 && _usable(response)) {
       _cache[key] = _CachedResponse(response, DateTime.now());
     }
+  }
+
+  /// 响应值不值得进缓存。
+  ///
+  /// 走 `fqnovel.com` 的那几个签名接口响应体是 JSON（`responseType: plain` 给的是
+  /// 字符串），空体与业务码非 0 都不该缓存。网页那几个（HTML）只要有内容就行。
+  bool _usable(Response<dynamic> response) {
+    final body = response.data;
+    if (body is! String || body.trim().isEmpty) return false;
+    final decoded = decodeJsonObject(body);
+    if (decoded == null) return true; // 不是 JSON：HTML 之类，有内容就够
+    final code = firstNonEmpty(<String>[
+      mapString(decoded, const <String>['code', 'Code', 'status_code']),
+      mapString(
+        nestedMap(decoded, const <String>['BaseResp']),
+        const <String>['StatusCode'],
+      ),
+    ]);
+    return code.isEmpty || code == '0';
   }
 }
 

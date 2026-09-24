@@ -218,10 +218,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       final picked = override == null && restored == null
           ? _pickVariant(media, settings.preferredQuality)
           : media;
+      // 定下真正要用哪个地址（主地址不通就换备选）。下游的头部取回、解密计划与
+      // setMedia 全都读 picked.url，所以这一步必须在它们**之前**收敛掉。
+      final settled = local == null ? await _settleAddress(picked) : picked;
       if (mounted) {
         setState(() {
-          _media = picked;
-          _qualityLabel = picked.quality > 0 ? '${picked.quality}P' : '自动';
+          _media = settled;
+          _qualityLabel = settled.quality > 0 ? '${settled.quality}P' : '自动';
           if (local != null) _prepareNote = '这一集已预取到本地，直接播';
         });
       }
@@ -234,9 +237,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       // 能算出解密计划就走**流式**：只取头部（`moov` 在那里，约 1 MB）就够了，不用等
       // 整集下完。算不出计划（站点改了封装之类）再退回「先下载整集再解」那条已验证的路。
       Uint8List? plan;
-      if (local == null && picked.isEncrypted) {
+      if (local == null && settled.isEncrypted) {
         try {
-          plan = await _buildDecryptPlan(picked);
+          plan = await _buildDecryptPlan(settled);
         } catch (_) {
           plan = null;
           if (mounted) {
@@ -250,15 +253,15 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
         await _player.setMedia(url: local.uri.toString());
       } else if (plan != null) {
         await _player.setMedia(
-          url: picked.url,
-          referer: picked.referer,
-          cencKey: picked.cencKey,
+          url: settled.url,
+          referer: settled.referer,
+          cencKey: settled.cencKey,
           decryptPlan: plan,
         );
       } else {
         final file = await prepareEpisode(
           dio: ref.read(dioProvider),
-          media: picked,
+          media: settled,
           videoId: _episode.videoId,
           onProgress: (received, total) {
             if (!mounted || total <= 0) return;
@@ -332,6 +335,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     quality: media.quality,
     width: media.width,
     height: media.height,
+    // 备选地址也要跟着走。漏了它，用户一切画质就落到一个没有备胎的档位上——
+    // 主地址恰好被限时，一切画质就播不了，而换回去又好了，极难归因。
+    backupUrls: media.backupUrls,
     variants: variants,
   );
 
@@ -363,6 +369,46 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       throw HongguoProtocolException('头部里解不出 CENC 索引');
     }
     return encodeDecryptPlan(index, buildNeutralizingPatches(head));
+  }
+
+  /// 定地址：主地址不可达时依次试备选（`backup_url`），返回第一个能用的。
+  ///
+  /// **必须在建解密计划之前做**：头部和正片得来自同一个地址。先在备胎上取到头部、
+  /// 正片却还打在主地址上，等于白试——主地址挂着的话正片照样播不出来。
+  ///
+  /// 判可达只取 1 字节（`Range: bytes=0-0`）：200 与 206 都算通。实测每档只多一个备选
+  /// （落在另一个 CDN 主机上），所以这一步最多多打一个小请求；换来的是主地址被限时不用
+  /// 用户手动重试。
+  ///
+  /// 全都不通时**把主地址原样交出去**，让播放器去报它自己的错——比在这里编一个
+  /// 「都不可达」更有用，因为播放器的错误里带状态码。
+  Future<Media> _settleAddress(Media media) async {
+    if (media.backupUrls.isEmpty) return media;
+    for (final address in media.allUrls) {
+      try {
+        final response = await ref.read(dioProvider).get<List<int>>(
+          address,
+          options: Options(
+            headers: <String, String>{
+              'Referer': media.referer,
+              'User-Agent': webUserAgent,
+              'Range': 'bytes=0-0',
+            },
+            responseType: ResponseType.bytes,
+            validateStatus: (_) => true,
+          ),
+        );
+        final status = response.statusCode ?? 0;
+        if (status != 200 && status != 206) continue;
+        if (address == media.url) return media;
+        // 取证痕迹：换了地址必须能从日志里看出来，否则「怎么这一集画质变了」只能靠猜。
+        debugPrint('[media] 主地址不可达，改用备选：$address');
+        return media.withUrl(address);
+      } catch (_) {
+        continue;
+      }
+    }
+    return media;
   }
 
   void _startPolling() {
@@ -467,9 +513,12 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       // 目标**与当前集同一档**：切过去不该跳画质。当前集若是预取来的，`_media` 就是
       // 磁盘上那一档，用它当目标；`_pickVariant` 会挑最接近的那一路。
       final picked = _pickVariant(media, _media?.quality ?? 0);
+      // 预取也要定地址：整集下载打在主地址上，主地址挂了这一集就白预取（静默失败），
+      // 切过去时又得现走流式。
+      final settled = await _settleAddress(picked);
       final file = await prepareEpisode(
         dio: dio,
-        media: picked,
+        media: settled,
         videoId: episode.videoId,
         cancelToken: cancel,
       );

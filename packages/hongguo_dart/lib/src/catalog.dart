@@ -37,6 +37,22 @@ const List<WebCategory> webCategories = <WebCategory>[
   WebCategory(path: 'comic', name: '动漫'),
 ];
 
+/// App 分类 key → 网页分类路由。App 分类接口挂掉时靠它把标签落到网页。
+///
+/// `comic`（动漫）**故意不在表里**：它是「仅网页」的路由，首页没有这个标签
+/// （见 `lib/data/library_tabs.dart`），所以没有 App key 能映射到它。
+const Map<String, String> appGenreWebRoutes = <String, String>{
+  'short_play': 'real-drama',
+  'comic_series': 'comic-drama',
+  'ai_series': 'ai-drama',
+};
+
+/// 取 App 分类 key 对应的网页路由；没有对应关系返回**空串**。
+///
+/// 空串是个有意义的返回值，不是错误：它表示「这个标签兜不了」，调用方不该拿它去
+/// 拼 URL。首页的「综合」标签就是这种——它走推荐接口，网页没有等价物。
+String webRouteForGenre(String genreKey) => appGenreWebRoutes[genreKey] ?? '';
+
 /// App 分类的分页游标。对照 Go 的 `CatalogCursor`。
 ///
 /// 分页走的是 `offset` + `session_id`：session 超过 30 分钟作废，`has_more` 是唯一
@@ -267,31 +283,44 @@ extension HongguoCatalogApi on HongguoClient {
 
   /// 网页分类一页（免签名）。对照 Go 的 `Client.FetchWebCategoryPage`。
   ///
-  /// App 分类接口挂掉时的兜底。返回剧集与总页数。
-  Future<({List<Drama> dramas, int totalPages})> fetchWebCategoryPage({
+  /// App 分类接口挂掉时的兜底。**坐标系是页码，不是 offset**——这是它和
+  /// [fetchCatalogPage] 最本质的差别，别把两边的游标混着用（见 `CatalogPager`：
+  /// 一个标签一旦降级到网页，就整个会话都走网页）。
+  ///
+  /// 实测 `?page=N` 真的翻页（相邻页 0 重叠），每页 24 条；三个剧集路由的
+  /// `totalPages` 都是 34，`comic` 是 4。loader key 恒为 `category_$`，不随页码变。
+  Future<({List<Drama> dramas, int page, int totalPages})> fetchWebCategoryPage({
     required String route,
     required String category,
+    int page = 1,
   }) async {
+    if (page < 1) {
+      throw HongguoRequestException('网页分类页码无效');
+    }
     final base = trimTrailingSlash(webBase);
-    final body = await fetchText('$base/category/$route', referer: '$base/');
-    final page = routerLoaderMap(
+    // 第 1 页不带参数——站点默认就是第 1 页，带上会让 URL 与缓存键都多一份。
+    final url = page == 1
+        ? '$base/category/$route'
+        : '$base/category/$route?page=$page';
+    final body = await fetchText(url, referer: '$base/');
+    final loaded = routerLoaderMap(
       parseRouterData(body),
       const ['category_page', r'category_$'],
     );
-    if (page == null || page.isEmpty || page['isSuccess'] == false) {
+    if (loaded == null || loaded.isEmpty || loaded['isSuccess'] == false) {
       throw HongguoRequestException('红果分类数据不可用，可能是页面结构或访问权限变化');
     }
 
     final dramas = <Drama>[];
-    for (final item in anyList(page['recommendList'])) {
+    for (final item in anyList(loaded['recommendList'])) {
       final drama = dramaFromAny(item, category: category);
       if (drama.id.isNotEmpty) dramas.add(drama);
     }
     final totalPages = int.tryParse(
-          mapString(nestedMap(page, const ['pagination']), const ['totalPages']),
+          mapString(nestedMap(loaded, const ['pagination']), const ['totalPages']),
         ) ??
         0;
-    return (dramas: dramas, totalPages: totalPages);
+    return (dramas: dramas, page: page, totalPages: totalPages);
   }
 
   /// 分类推荐一页，带 `filter_ids` 去重。对照 Go 的 `Client.FetchRecommendations`。

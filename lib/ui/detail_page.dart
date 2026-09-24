@@ -90,7 +90,18 @@ class _DetailPageState extends ConsumerState<DetailPage> {
     // 评分来自另一个接口，会晚于主体到达；这里不等它（见 webSocialProvider）。
     final social = ref.watch(webSocialProvider(widget.seriesId));
     final preview = widget.preview;
-    final drama = detail.value?.drama ?? preview;
+    // 详情到了就用详情，**但缺的字段要从预览（分类快照）补回来**。
+    //
+    // 为什么必须合而不是直接换：详情现在由网页详情提供（App 详情接口已失效，见
+    // `hongguo_dart` 的 `fetchDetail`），而**网页没有播放量**。直接 `?? preview`
+    // 那种写法在详情到达的瞬间会把播放量整行抹掉——用户看到的是「刚点进来有、
+    // 一秒后没了」。`mergeDrama` 以详情为主、缺的用预览补，正好是这里要的。
+    //
+    // 深链进来（没有 preview）时补不了，认了：网页详情本身是完整的，只少播放量。
+    final loaded = detail.value?.drama;
+    final drama = loaded == null
+        ? preview
+        : (preview == null ? loaded : mergeDrama(loaded, preview));
 
     return Scaffold(
       body: CustomScrollView(

@@ -46,7 +46,36 @@ void main() {
     // App 源的正片基本都加密；拿到明文也算过，但不能两者都没有。
     expect(media.cencKey == null || media.cencKey!.length == 16, isTrue);
     expect(media.variants, isNotEmpty);
+    // 备选地址（`backup_url`，实测落在另一个 CDN 主机上）必须被收进来——丢了的话
+    // 主地址一挂就整集播不了，而它是免费拿到的冗余。
+    expect(
+      <Media>[media, ...media.variants].any((m) => m.backupUrls.isNotEmpty),
+      isTrue,
+      reason: '一档备选地址都没收到，backup_url 的解析可能已失效',
+    );
   }, skip: skip, timeout: const Timeout(Duration(minutes: 3)));
+
+  test('网页详情能独立解析出完整分集（App 详情失效后唯一可用的源）', () async {
+    final client = HongguoClient();
+    final ids = await discoverSeriesIds(client);
+    expect(ids, isNotEmpty, reason: '挖不到 ID 就没法验证');
+
+    final body = await client.fetchText(
+      client.webDetailUrl(ids.first),
+      referer: client.webDetailReferer,
+    );
+    final detail = parseWebDetail(body, ids.first);
+    expect(detail.drama.title, isNotEmpty);
+    expect(detail.drama.sourceId, ids.first);
+    expect(detail.episodes, isNotEmpty);
+    // 网页只给一串 vid、不给集号，集号是下标 + 1 —— 这里钉死它连续。
+    for (var index = 0; index < detail.episodes.length; index++) {
+      expect(detail.episodes[index].number, index + 1);
+      expect(numericIdPattern.hasMatch(detail.episodes[index].videoId), isTrue);
+    }
+    // 注意：网页**没有播放量**（`views` 为空是正常的，不是解析坏了）。要显示播放量的
+    // 调用方得用 `mergeDrama` 从分类快照并回来，见 `lib/ui/detail_page.dart`。
+  }, skip: skip, timeout: const Timeout(Duration(minutes: 2)));
 
   // ---- 阶段 2：发现层 ----
 
@@ -129,15 +158,29 @@ void main() {
     expect(suggestions.length, lessThanOrEqualTo(10));
   }, skip: skip, timeout: const Timeout(Duration(minutes: 3)));
 
-  test('网页分类（免签名）有结果', () async {
+  test('网页分类（免签名）有结果，且 ?page=N 真的翻页', () async {
     final client = HongguoClient();
     final category = webCategories.first;
-    final page = await client.fetchWebCategoryPage(
+    final first = await client.fetchWebCategoryPage(
       route: category.path,
       category: category.name,
     );
-    expect(page.dramas, isNotEmpty);
-    expect(page.totalPages, greaterThan(0));
+    expect(first.dramas, isNotEmpty);
+    expect(first.page, 1);
+    expect(first.totalPages, greaterThan(1));
+
+    // **这一条是整标签降级的前提**：App 分类挂掉后整个标签都走 ?page=N，如果服务端
+    // 忽略页码，降级就会原地打转、永远拉同一页。实测相邻页 0 重叠。
+    final second = await client.fetchWebCategoryPage(
+      route: category.path,
+      category: category.name,
+      page: 2,
+    );
+    expect(second.page, 2);
+    expect(second.dramas, isNotEmpty);
+    final firstIds = first.dramas.map((drama) => drama.id).toSet();
+    final overlap = second.dramas.where((drama) => firstIds.contains(drama.id));
+    expect(overlap, isEmpty, reason: '第 2 页与第 1 页有重叠，页码可能没生效');
   }, skip: skip, timeout: const Timeout(Duration(minutes: 2)));
 
   test('三级取流：resolveMedia 拿到可播地址与 Referer', () async {

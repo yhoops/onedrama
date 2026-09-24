@@ -20,8 +20,10 @@ export 'src/catalog.dart'
         RecommendationQuery,
         WebCategory,
         appGenres,
+        appGenreWebRoutes,
         parseCatalogPage,
-        webCategories;
+        webCategories,
+        webRouteForGenre;
 export 'src/cenc.dart'
     show
         BytePatch,
@@ -68,7 +70,12 @@ export 'src/crypto.dart'
         decodePlaybackResponse,
         pkcs7Unpad;
 export 'src/detail.dart'
-    show HongguoDetailApi, SocialInfo, parseAppDetail, parseWebSocialInfo;
+    show
+        HongguoDetailApi,
+        SocialInfo,
+        parseAppDetail,
+        parseWebDetail,
+        parseWebSocialInfo;
 export 'src/ids.dart'
     show
         canonicalSource,
@@ -102,6 +109,7 @@ export 'src/media.dart'
         HongguoMediaApi,
         Media,
         isHttpMediaUrl,
+        mediaAddresses,
         qualityFromText,
         selectAppMedia;
 export 'src/media_web.dart'

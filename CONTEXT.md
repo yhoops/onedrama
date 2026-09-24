@@ -24,9 +24,17 @@ _Avoid_: App Source, App 源 (源 already means [Source]), native API
 红果 as reached through its public web pages. Publishes **Rating**, and needs no request signing. Publishes **no View Count**.
 _Avoid_: Web Source, 网页源, H5, front-end
 
+**Degraded Feed**:
+A home tab whose pages now come from the [Web Interface] because the [App Interface] stopped serving that capability. Whole-tab and sticky for the life of that pager: the two interfaces paginate in different coordinate systems (offset + session vs page number), so one feed never mixes them. A fresh pager tries the App Interface again. The 综合 tab cannot degrade — the Web Interface publishes no recommendations.
+_Avoid_: fallback, 降级源 (源 already means [Source]), offline mode, cache
+
 **Media**:
 A concrete playable stream for an Episode: HTTP(S) URL, optional AES-128 CENC key, referer, and the frame's real pixel size. The Episode's `hongguo-cenc://{vid}` address is a placeholder, not Media.
 _Avoid_: video URL, stream (alone), playback
+
+**Backup Address**:
+Another HTTP(S) address for the **same** [Media] at the **same** quality tier, usually on a different CDN host. Tried only when the primary address is unreachable; the winner becomes the Media's address. It is not a quality tier and never appears as a choice.
+_Avoid_: 备用源 (源 already means [Source]), mirror, fallback URL, variant
 
 **Prefetch**:
 Downloading and decrypting the next Episode's [Media] to disk ahead of time, so that switching episodes plays a local file instead of opening a new stream. It is not offline download: the file is a cache, kept for ten Episodes at most.

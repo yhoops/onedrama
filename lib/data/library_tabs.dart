@@ -5,6 +5,8 @@
 /// 标签里全是漫剧」，很难一眼归因。
 library;
 
+import 'package:hongguo_dart/hongguo_dart.dart';
+
 /// 一个一级标签。`genreKey` 为 null 表示「综合」——走推荐接口，而不是分类接口。
 class LibraryTab {
   const LibraryTab({required this.label, this.genreKey, this.scene});
@@ -21,6 +23,12 @@ class LibraryTab {
   /// **剧库部数与「本次新增」只算分类标签**：把综合算进去，那个数字会常年顶在几十部，
   /// 而上游其实一部都没上。见 `CONTEXT.md` 的 Library Count / Newly Added。
   bool get isCategory => genreKey != null;
+
+  /// App 分类接口挂掉时，这个标签落到哪个网页分类路由。
+  ///
+  /// 空串表示**兜不了**：综合走推荐接口，网页没有等价物。映射表在协议包里
+  /// （`appGenreWebRoutes`），这里不另存一份——两份表迟早只更新一处。
+  String get webRoute => genreKey == null ? '' : webRouteForGenre(genreKey!);
 }
 
 const List<LibraryTab> libraryTabs = <LibraryTab>[

@@ -888,6 +888,36 @@ APK 本身照旧不进版本控制（已在 `.gitignore`，与密钥同一条边
 > 短时间反复启动会被上游限流。要验「只在首次导入」就用 **1.3.0+4**；留 1.2.0 那份只是为了
 > 在仓库里看得出先后。
 
+### 1.3.0+4 之后的修复打包：**1.3.1+5**（详情改走网页兜底；分类可降级；空体不入缓存）
+
+`flutter build apk --release` → **55.4 MiB**，另挪一份到仓库根 `onedrama-1.3.1-release.apk`。
+签名、SDK、架构、可调试性都与 1.3.0+4 相同，只有版本号两处变了。
+
+上游把 App 详情接口 `/novel/player/video_detail/v1/` 停了——**HTTP 200 + 空响应体**
+（换 host、GET/POST、加 `book_id` 全是空体；`/video_detail/` 返回 404，说明路径还在、
+只是不再吐数据）。Dart 侧当时只有 App 这一条腿，于是点开任何一部剧都报「红果 App 接口
+未返回有效数据」。Go 包一直有网页兜底（`hongguo/detail.go` 的两条腿），Dart 移植时漏了。
+
+本轮补的是**调用链**，不是解析（解析逐字比对过，两边一致）：
+
+| 改动 | 位置 |
+| --- | --- |
+| 详情：新增 `parseWebDetail`，`fetchDetail` 改成 App → 网页两条腿 | `packages/hongguo_dart/lib/src/detail.dart` |
+| 分类：`fetchWebCategoryPage` 补 `?page=N`；`appGenreWebRoutes` 映射 | `packages/hongguo_dart/lib/src/catalog.dart` |
+| 取流：`Media.backupUrls` + `allUrls` / `withUrl`，收 `backup_url` 等并解 base64 | `packages/hongguo_dart/lib/src/media.dart` |
+| 整标签降级（`_webMode` / `_webPage`）+ `[degrade]` 取证日志 | `lib/data/catalog_pager.dart` |
+| 空体 / 业务码非 0 不入 TTL 缓存 | `lib/data/network.dart` |
+| `mergeDrama(详情, preview)` 保住播放量（网页不给播放量） | `lib/ui/detail_page.dart` |
+| `_settleAddress` 依次探活备选地址，胜者写回 `url` 再建解密计划 | `lib/ui/player_page.dart` |
+
+决策与取舍见 `docs/adr/0013`；词条 Degraded Feed / Backup Address 进 `CONTEXT.md`。
+
+**验证**：联网测试 8/8（修前 2 挂）、协议包单测 41/41、App 单测 65/65；真机上首页 → 详情 →
+播放走通（详情页截图显示 `全 60 集 · 古装 · 已完结`、`★ 8.8分`、`▶ 98.3万人看过`，
+播放页 `第 2/60 集 · 1080P` 在播，日志 `[prefetch] 第 3 集就绪`）。
+**分类整标签降级没有真机验证**——要在真机上逼 App 分类接口失败得改网络环境，没动；它由
+5 个确定性假服务器测试覆盖，另有一条联网测试证明 `?page=N` 真的翻页（相邻页 0 重叠）。
+
 ---
 
 ## 风险
