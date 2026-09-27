@@ -6,7 +6,7 @@
 
 ## 范围
 
-**做**：短剧库（搜索 + 四个一级标签 + 题材 chip 跳搜索 + 双列瀑布流）、榜单（右上角图标）、详情页（竖版沉浸式）、播放页（Flutter 控件 + 手势 + 锁屏 + 选集 + 收藏 + 倍速 + 画质）、我的（收藏 / 历史）、设置页全项、本地观看进度、drift 持久化。
+**做**：短剧库（搜索 + 四个一级标签 + 题材筛选（分类标签走服务端官方题材词表；综合标签仍是跳搜索的快捷词）+ 筛选浮层 + 双列瀑布流）、榜单（右上角图标）、详情页（竖版沉浸式）、播放页（Flutter 控件 + 手势 + 锁屏 + 选集 + 收藏 + 倍速 + 画质）、我的（收藏 / 历史）、设置页全项、本地观看进度、sqflite 持久化。
 
 **不做**：账号 / 云同步、弹幕、离线下载（**预取下一集不算**——那是按集淘汰的播放缓存，见 [ADR-0009](adr/0009-prefetch-next-episode-as-a-whole-file.md)；两者差在「用户点名要下的整部剧」与「播放器自己攒的下一集」）、多源（v1 只有红果）、像素级仿红果官方 UI。
 
@@ -938,3 +938,31 @@ APK 本身照旧不进版本控制（已在 `.gitignore`，与密钥同一条边
 - 弹幕（另一套 `X-Argus` / `X-Ladon` 签名，v1 不做）
 - 离线下载（原项目靠 FFmpeg 解 CENC）
 - 公开发 APK（见 [ADR-0004](adr/0004-all-three-media-resolution-paths.md)）
+
+---
+
+## 阶段 7 — 题材筛选 + 轻量筛选浮层
+
+**推翻了本文件与 `模块划分.md` 里「红果没有题材词表接口」的旧说法。** 那句话只对 App 接口成立；网页分类页 `selectorList` 是有官方题材词表的。
+
+**取证结论**（探针打真接口 + 用户从浏览器 DevTools 抓请求，2026-09-27）：
+
+- 网页分类页给两样东西：**官方题材词表**（真人剧 24 项、漫剧/AI剧 各 8 项，每项含 `selector_item_id`）与**逐剧 tags**。
+- App 分类接口**两样都没有**：列表行 `tags` 为空，`need_selector_panel`（配多种 `req_type`）不吐词表；其 `category_dim_theme` 维度是活的，但 App 侧题材 ID 不外露。
+- 服务端题材筛选 = **路径段** `/category/<内容类型>/<selector_item_id>`（如 `/category/real-drama/costume`），`?page=N` 翻页、`totalPages≈34`、24 条/页。**URL query 一律不生效**（`?category_json_ids=5000` / `?topic=costume` 与基线完全重叠，`/category/costume` 直接 404）。这条是用户从浏览器 Network 面板抓出来才解开的——静态抓不到（筛选是 hydrate 后的运行时请求，SSR HTML 里 grep 不到参数名）。
+
+**做了什么**：
+
+- [x] 协议层 `catalogThemes` / `themesForWebRoute` / `themedCategoryRoute`（`catalog.dart`），取数**复用**现有 `fetchWebCategoryPage`（route 传带斜杠的串即可）——协议层几乎零改
+- [x] `CatalogPager` 加 `filterRoute`：非空时只走网页服务端筛选，**不碰 App 源、不走 `_webMode` 降级**（两条机制别混）
+- [x] 分类标签的题材 chip 行从「跳搜索」升级成**单选筛选器**；**综合标签保持跳搜索**（网页无推荐等价物）
+- [x] 排行榜图标旁加**「筛选」浮层**（题材 / 状态·篇幅 / 排序 + 重置·确定）：题材走服务端，状态·篇幅与排序**本地**做（`applyLibraryFilters` 纯函数，缺字段的剧排最后）
+- [x] 修掉两个跨筛选的竞态：`ensureLoaded`（await 数据库）与 `_pull`（await 网络）都会跨过一次题材切换而污染结果——用 `identical(_pager, pagerAtStart)` 守卫丢弃
+- [x] 修掉浮层 chip 布局 bug：`Container(alignment:)` 在 `Wrap` 里被撑满整行
+
+**验证**：`flutter analyze` 干净；`flutter test` **85 全绿**（新增 pager 筛选分支 2 条 + 词表断言 5 条 + 本地筛排 9 条）；`LIVE=1` 的 drift 测试确认三套硬编码词表与上游 `selectorList` 逐 id 一致。真机 adb：三个分类标签都能筛出正确题材、按集数少优先排序正确（55/59/71/73）、重置回未筛选、综合浮层正确地无题材段；logcat 无异常。
+
+**没验到的**：
+- 「黑屏」一度被报为偶发——复现三次都正常，随后按「偶发」判断，落成上面那两处竞态守卫。**未拿到故障当时的证据**，所以这两处是**防御性修复**，不是「已定位的根因」。
+- 本地筛排是展示层变换，`LibraryFeed` 与 sqflite 耦合，单测跑不了（同 `library_snapshot_test` 的既有限制）——纯函数 `applyLibraryFilters` 有单测，feed 那一层只真机验过。
+- 上游若增删题材，硬编码词表会 stale——靠 `LIVE=1` drift 测试发现，但它默认跳过。

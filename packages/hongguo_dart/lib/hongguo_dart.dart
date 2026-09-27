@@ -13,6 +13,7 @@ library;
 export 'src/catalog.dart'
     show
         AppGenre,
+        CategoryTheme,
         CatalogCursor,
         CatalogPage,
         HongguoCatalogApi,
@@ -21,7 +22,10 @@ export 'src/catalog.dart'
         WebCategory,
         appGenres,
         appGenreWebRoutes,
+        categoryThemes,
         parseCatalogPage,
+        themedCategoryRoute,
+        themesForWebRoute,
         webCategories,
         webRouteForGenre;
 export 'src/cenc.dart'
