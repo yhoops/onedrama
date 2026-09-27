@@ -11,10 +11,17 @@ import 'package:hongguo_dart/hongguo_dart.dart';
 import 'library_tabs.dart';
 
 class CatalogPager {
-  CatalogPager({required this.client, required this.tab});
+  CatalogPager({required this.client, required this.tab, this.filterRoute});
 
   final HongguoClient client;
   final LibraryTab tab;
+
+  /// 题材筛选路由（`<内容类型>/<题材>`，如 `real-drama/costume`）。
+  ///
+  /// 非空时本 pager **只走网页服务端筛选**：不碰 App 源、不做 App→网页降级判断——
+  /// 它本来就是网页源，`_webMode` 那套「断腿才切」的逻辑对它不适用。综合无题材，
+  /// 不会带 filterRoute。空则是普通信息流（App 源 + 断腿降级），行为逐字不变。
+  final String? filterRoute;
 
   CatalogCursor _cursor = const CatalogCursor();
   int _offset = 0;
@@ -48,7 +55,11 @@ class CatalogPager {
     if (_exhausted) return const <Drama>[];
 
     final List<Drama> incoming;
-    if (tab.genreKey == null) {
+    if (filterRoute != null) {
+      // 题材筛选：直接走网页 `?page=N`，用 filterRoute 而不是 tab.webRoute。
+      // 不经 App 源、不经降级——这条腿一开始就是网页服务端筛选。
+      incoming = await _nextWebPage(route: filterRoute);
+    } else if (tab.genreKey == null) {
       // 综合走推荐接口。`seen` 让服务端去重，上限 540 是协议侧的硬上限。
       //
       // **没有兜底**：网页没有「推荐」这个等价物，所以 App 推荐接口一挂，综合就是挂。
@@ -108,9 +119,9 @@ class CatalogPager {
   ///
   /// `totalPages` 解析不出来时（返回 0）不当作到底，而是靠「这一页返回了 0 条」来收尾——
   /// 宁可多打一次请求，也别因为页面结构变了就以为翻完了。
-  Future<List<Drama>> _nextWebPage() async {
+  Future<List<Drama>> _nextWebPage({String? route}) async {
     final page = await client.fetchWebCategoryPage(
-      route: tab.webRoute,
+      route: route ?? tab.webRoute,
       category: tab.label,
       page: _webPage + 1,
     );

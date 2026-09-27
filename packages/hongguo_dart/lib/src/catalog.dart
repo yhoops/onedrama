@@ -53,6 +53,82 @@ const Map<String, String> appGenreWebRoutes = <String, String>{
 /// 拼 URL。首页的「综合」标签就是这种——它走推荐接口，网页没有等价物。
 String webRouteForGenre(String genreKey) => appGenreWebRoutes[genreKey] ?? '';
 
+/// 网页分类的题材筛选项：`id` 是 `selector_item_id`，`name` 是 `show_name`。
+/// 拼进路径 `/category/<内容类型>/<id>` 就是服务端题材筛选（见 [themedCategoryRoute]）。
+class CategoryTheme {
+  const CategoryTheme(this.id, this.name);
+
+  final String id;
+  final String name;
+}
+
+/// 漫剧与 AI剧共用同一套题材（实采样两边一致）。抽出来避免两份各写一遍、迟早只改一处。
+const List<CategoryTheme> _comicAiThemes = <CategoryTheme>[
+  CategoryTheme('creative', '脑洞'),
+  CategoryTheme('fantasy', '玄幻'),
+  CategoryTheme('drama', '剧情'),
+  CategoryTheme('apocalypse', '末世'),
+  CategoryTheme('wealthy-family', '豪门'),
+  CategoryTheme('wonder', '奇幻'),
+  CategoryTheme('sci-fi', '科幻'),
+  CategoryTheme('adventure', '冒险'),
+];
+
+/// 各网页内容类型的官方题材词表，采样自网页分类页的 `selectorList`（2026-09-27）。
+/// key 是网页路由（与 [appGenreWebRoutes] 的值一致）。**综合不在内**——它走推荐流、
+/// 网页无等价物，无法筛。
+///
+/// **硬编码而非每次拉 `selectorList`**：省一次请求、离线也能出 chip；上游增删题材靠
+/// `LIVE=1` 的 drift 测试（`test/category_theme_test.dart`）对比兜底。
+const Map<String, List<CategoryTheme>> categoryThemes =
+    <String, List<CategoryTheme>>{
+  'real-drama': <CategoryTheme>[
+    CategoryTheme('romance', '爱情'),
+    CategoryTheme('period', '年代'),
+    CategoryTheme('comeback', '逆袭'),
+    CategoryTheme('legend', '传奇'),
+    CategoryTheme('growth', '成长'),
+    CategoryTheme('family', '家庭'),
+    CategoryTheme('clan', '家族'),
+    CategoryTheme('cute-kids', '萌宝'),
+    CategoryTheme('suspense', '悬疑'),
+    CategoryTheme('thriller', '惊悚'),
+    CategoryTheme('horror', '恐怖'),
+    CategoryTheme('supernatural', '志怪'),
+    CategoryTheme('costume', '古装'),
+    CategoryTheme('fantasy', '玄幻'),
+    CategoryTheme('wonder', '奇幻'),
+    CategoryTheme('urban', '都市'),
+    CategoryTheme('youth', '青春'),
+    CategoryTheme('comedy', '喜剧'),
+    CategoryTheme('sci-fi', '科幻'),
+    CategoryTheme('disaster', '灾难'),
+    CategoryTheme('action-adventure', '动作冒险'),
+    CategoryTheme('war', '战争'),
+    CategoryTheme('variety', '综艺'),
+    CategoryTheme('drama', '剧情'),
+  ],
+  'comic-drama': _comicAiThemes,
+  'ai-drama': _comicAiThemes,
+};
+
+/// 该内容类型的题材词表；未知路由（含综合的空串）返回空列表。
+List<CategoryTheme> themesForWebRoute(String webRoute) =>
+    categoryThemes[webRoute] ?? const <CategoryTheme>[];
+
+/// 拼「内容类型 + 题材」的网页分类 route，供 [HongguoCatalogApi.fetchWebCategoryPage] 用。
+///
+/// 服务端筛选是路径段（`/category/real-drama/costume`），不是 query——URL query 试过一律
+/// 不过滤或 404（见任务 09-27-tag-filter 的取证）。themeId 必须在该类型词表内（同
+/// [HongguoCatalogApi.fetchCatalogPage] 校验 genreKey 的风格：拼错宁可这里炸，别静默
+/// 返回别的页面）。
+String themedCategoryRoute(String webRoute, String themeId) {
+  if (!themesForWebRoute(webRoute).any((theme) => theme.id == themeId)) {
+    throw HongguoRequestException('未知的题材筛选：$webRoute/$themeId');
+  }
+  return '$webRoute/$themeId';
+}
+
 /// App 分类的分页游标。对照 Go 的 `CatalogCursor`。
 ///
 /// 分页走的是 `offset` + `session_id`：session 超过 30 分钟作废，`has_more` 是唯一
