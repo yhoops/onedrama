@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -15,6 +16,7 @@ import '../data/settings.dart';
 import '../player/cenc_player.dart';
 import '../player/decrypt_plan.dart';
 import 'theme.dart';
+import 'quality_pick.dart';
 import 'widgets/pressable.dart';
 
 /// 打开播放页的参数。走 `extra` 传，不塞进路由参数。
@@ -305,20 +307,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   /// 从同一次取流返回的画质里挑一路。
   ///
   /// `preferredQuality` 为 0 表示自动——此时用默认选中的那路（协议包已按分辨率与
-  /// 编码挑过最优）。
+  /// 编码挑过最优）。preferred > 0 时按**真实像素**就近向上取，见 [pickByPreferred]
+  /// ——不按 `Media.quality` 档位标签，因为标签会被标错（有剧把 1280×720 标「1080p」）。
   Media _pickVariant(Media media, int preferred) {
     if (preferred <= 0 || media.variants.isEmpty) return media;
     final variants = media.variants;
-    Media best = media;
-    var gap = 1 << 30;
-    for (final variant in variants) {
-      final current = (variant.quality - preferred).abs();
-      if (current < gap) {
-        best = variant;
-        gap = current;
-      }
-    }
-    return _attachVariants(best, variants);
+    final chosen = pickByPreferred(variants, preferred).pick;
+    return _attachVariants(chosen, variants);
   }
 
   /// 把档位列表挂回一个 [Media]。
@@ -578,10 +573,14 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     if (_haptic) HapticFeedback.selectionClick();
   }
 
+  /// 当前手势灵敏度系数。handler 是事件回调，用 `read` 不 `watch`。
+  double get _gestureFactor =>
+      gestureFactor(ref.read(settingsProvider).gestureSensitivity);
+
   void _onVerticalDragUpdate(DragUpdateDetails details) {
     if (_locked) return;
     final width = MediaQuery.sizeOf(context).width;
-    final delta = -details.delta.dy / 260;
+    final delta = -details.delta.dy / 260 * _gestureFactor;
     setState(() {
       if (_dragStartX < width / 2) {
         _brightness = (_brightness + delta).clamp(0.05, 1);
@@ -596,7 +595,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     if (_locked || _state.duration <= Duration.zero) return;
     final width = MediaQuery.sizeOf(context).width;
     final current = _seekPreviewMs ?? _state.position.inMilliseconds.toDouble();
-    final delta = details.delta.dx / width * _state.duration.inMilliseconds;
+    final delta =
+        details.delta.dx / width * _state.duration.inMilliseconds * _gestureFactor;
     setState(() {
       _seekPreviewMs = (current + delta).clamp(
         0,
@@ -609,6 +609,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     final target = _seekPreviewMs;
     _seekPreviewMs = null;
     if (target == null) return;
+    // 取证：确认播放页真的读到了设置里的档位（手感差异靠手测）。
+    if (kDebugMode) debugPrint('[gesture] factor=$_gestureFactor');
     _bump();
     unawaited(_player.seekTo(Duration(milliseconds: target.round())));
   }
@@ -741,8 +743,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
           _GestureLayer(
             onTap: _locked ? () {} : _toggleControls,
             onDoubleTap: _locked ? null : () => unawaited(_togglePlay()),
-            onVerticalDragStart: (details) =>
-                _dragStartX = details.localPosition.dx,
+            onVerticalDragStart: (details) {
+              _dragStartX = details.localPosition.dx;
+              if (kDebugMode) debugPrint('[gesture] factor=$_gestureFactor');
+            },
             onVerticalDragUpdate: _onVerticalDragUpdate,
             onHorizontalDragUpdate: _onHorizontalDragUpdate,
             onHorizontalDragEnd: _onHorizontalDragEnd,
@@ -805,6 +809,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
         brightness: _brightness,
         volume: _volume,
         favorite: _favorite,
+        preferredQuality: ref.read(settingsProvider).preferredQuality,
         onPickEpisode: (index) {
           Navigator.of(sheetContext).pop();
           _switchTo(index);
@@ -1398,6 +1403,7 @@ class _SettingsSheet extends StatefulWidget {
     required this.brightness,
     required this.volume,
     required this.favorite,
+    required this.preferredQuality,
     required this.onPickEpisode,
     required this.onPickSpeed,
     required this.onPickQuality,
@@ -1415,6 +1421,8 @@ class _SettingsSheet extends StatefulWidget {
   final double brightness;
   final double volume;
   final bool favorite;
+  /// 用户设的优先画质（0=自动）。用于画质面板在该剧最低档高于它时给一句说明。
+  final int preferredQuality;
   final ValueChanged<int> onPickEpisode;
   final ValueChanged<double> onPickSpeed;
   final ValueChanged<Media> onPickQuality;
@@ -1651,8 +1659,16 @@ class _SettingsSheetState extends State<_SettingsSheet> {
     final variants = widget.media?.variants ?? const <Media>[];
     final current = widget.media;
     if (variants.isEmpty || current == null) return;
+    // 该剧最低档高于用户设的优先画质时说明一句——横屏剧常被 selectAppMedia 滤掉低编码档，
+    // 只剩 1080，用户设 720 却没变化，不说清就是「设了没用」。
+    final preferred = widget.preferredQuality;
+    final floor = pickByPreferred(variants, preferred).floor;
+    final note = (preferred > 0 && floor > preferred)
+        ? '该剧最低 ${floor}P'
+        : null;
     final picked = await _pick<Media>(
       title: '画质',
+      note: note,
       options: [
         for (final variant in variants)
           (variant, variant.quality > 0 ? '${variant.quality}P' : '自动'),
@@ -1671,6 +1687,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
     required String title,
     required List<(T, String)> options,
     required T? current,
+    String? note,
   }) => showModalBottomSheet<T>(
     context: context,
     backgroundColor: const Color(0xFF1A1A1D),
@@ -1692,6 +1709,14 @@ class _SettingsSheetState extends State<_SettingsSheet> {
               ),
             ),
           ),
+          if (note != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 6),
+              child: Text(
+                note,
+                style: const TextStyle(fontSize: 12, color: playerAccent),
+              ),
+            ),
           for (final option in options)
             ListTile(
               title: Text(
