@@ -12,6 +12,16 @@ enum ControlSide { left, right }
 /// 手势灵敏度。参考页的「手势灵敏度：低 / 中 / 高」。
 enum GestureSensitivity { low, medium, high }
 
+/// 手势灵敏度系数：低更钝、高更灵，**中档 = 1.0**（严格等于历史手感，改动零回归）。
+///
+/// 竖直（亮度 / 音量）与水平（拖进度）共用同一套档位——设置里只有一个「手势灵敏度」
+/// 开关，不分两轴。播放页把它乘进写死的换算量里。
+double gestureFactor(GestureSensitivity sensitivity) => switch (sensitivity) {
+  GestureSensitivity.low => 0.6,
+  GestureSensitivity.medium => 1.0,
+  GestureSensitivity.high => 1.6,
+};
+
 /// 全部用户设置。不可变；改动通过 copyWith 生成新值再落盘。
 class AppSettings {
   const AppSettings({

@@ -64,4 +64,28 @@ void main() {
       expect(legacy.controlSide, ControlSide.right);
     });
   });
+
+  group('手势灵敏度系数', () {
+    // 播放页把这个系数乘进写死的手势量。中档必须严格是 1.0——否则默认手感会变，
+    // 是静默回归；低 < 中 < 高，否则「低更钝、高更灵」的语义反了。
+    test('三档取值：低 0.6 / 中 1.0 / 高 1.6', () {
+      expect(gestureFactor(GestureSensitivity.low), 0.6);
+      expect(gestureFactor(GestureSensitivity.medium), 1.0);
+      expect(gestureFactor(GestureSensitivity.high), 1.6);
+    });
+
+    test('中档等于历史手感（1.0），且单调递增', () {
+      expect(gestureFactor(GestureSensitivity.medium), 1.0);
+      expect(
+        gestureFactor(GestureSensitivity.low) <
+            gestureFactor(GestureSensitivity.medium),
+        isTrue,
+      );
+      expect(
+        gestureFactor(GestureSensitivity.medium) <
+            gestureFactor(GestureSensitivity.high),
+        isTrue,
+      );
+    });
+  });
 }
