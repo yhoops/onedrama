@@ -177,21 +177,51 @@ func ParsePlaybackAPI(body string) (Media, error) {
 	return Media{}, errors.New("红果备用播放接口未返回该集可用的媒体和密钥，请稍后重试或确认该集是否仍可访问")
 }
 
+// appVideoModelPath 是上游取流入口。
+//
+// `/novel/player/video_model/v1/`（单集）与 `/novel/player/multi_video_model/v1/`
+// 都会以「HTTP 200 + 空响应体」表示停供——2026-10 起两者同时变成这样。preload 是
+// 眼下唯一还吐数据的入口。
+const appVideoModelPath = "/novel/player/multi_video_model/preload/v1/"
+
+// mixedVideoContentType 是 mixed_video_id_map 的键：content_type，1004 = 短剧。
+// 与 ResolvePlaybackAPI 拼给第三方接口的 reference 同口径。
+const mixedVideoContentType = "1004"
+
+// appVideoPlatform 是上游选取流通道用的值。详情接口给的是 3，但这个入口不认 3
+// （报 video platform invalid）；实测 0–12 / 100 / 1000 / 1004 / 2000 / 8662 也全
+// 被拒，只有 1024 收。语义上游没公开。
+const appVideoPlatform = 1024
+
+// ResolveAppMedia 取一集的 App 源媒体。对照 Dart 的 HongguoMediaApi.resolveAppMedia。
 func (c *Client) ResolveAppMedia(ctx context.Context, videoID string) (Media, error) {
 	if !NumericID.MatchString(videoID) {
 		return Media{}, errors.New("红果视频 ID 无效")
 	}
 	payload := map[string]any{
-		"video_id": videoID, "content_type": 1,
-		"biz_param": map[string]any{"need_all_video_definition": true, "video_platform": 3},
+		"biz_param": map[string]any{
+			"detail_page_version":       0,
+			"device_level":              3,
+			"disable_digg_stat":         false,
+			"need_all_video_definition": true,
+			"need_mp4_align":            false,
+			"use_os_player":             false,
+			"use_server_dns":            false,
+			"video_platform":            appVideoPlatform,
+		},
+		"mixed_video_id_map": map[string]any{
+			mixedVideoContentType: []string{videoID},
+		},
 	}
-	result, err := c.AppRequest(ctx, http.MethodPost, "/novel/player/video_model/v1/", nil, payload)
+	result, err := c.AppRequest(ctx, http.MethodPost, appVideoModelPath, nil, payload)
 	if err != nil {
 		return Media{}, err
 	}
-	data := nestedMap(result, "data")
-	model, _ := data["video_model"].(map[string]any)
-	if encoded, ok := data["video_model"].(string); ok {
+	// 响应是批量的：每个 vid 的结果挂在 data[vid] 下。只认请求的那一个，拿不到就让
+	// SelectAppMedia 报错——别退回「data 里唯一的那一项」，那可能是别的集的地址。
+	entry := nestedMap(nestedMap(result, "data"), videoID)
+	model, _ := entry["video_model"].(map[string]any)
+	if encoded, ok := entry["video_model"].(string); ok {
 		decoder := json.NewDecoder(strings.NewReader(encoded))
 		decoder.UseNumber()
 		if err := decoder.Decode(&model); err != nil {

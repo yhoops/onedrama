@@ -283,27 +283,69 @@ Media selectAppMedia(Map<String, dynamic>? model) {
   throw HongguoRequestException('红果 App 未返回兼容的媒体，已跳过不支持的编码');
 }
 
+/// 上游取流入口。
+///
+/// `/novel/player/video_model/v1/`（单集）与 `/novel/player/multi_video_model/v1/`
+/// 都会以「HTTP 200 + 空响应体」表示停供——2026-10 起两者同时变成这样，而空体在
+/// `client.dart:151` 就被判死，于是播放页三腿全灭。`preload` 是眼下唯一还吐数据的
+/// 入口（见任务 research 留档）。
+const String _appVideoModelPath = '/novel/player/multi_video_model/preload/v1/';
+
+/// `mixed_video_id_map` 的键是 content_type：1004 = 短剧。与 `media_web.dart` 里
+/// `resolvePlaybackApi` 拼给第三方接口的 reference 同口径。
+const String _mixedVideoContentType = '1004';
+
+/// 上游用它选取流通道。
+///
+/// 详情接口给的是 3，但这个入口不认 3（报 `video platform invalid, param:3`）；实测
+/// 0–12 / 100 / 1000 / 1004 / 2000 / 8662 也全被拒，**只有 1024 收**。语义上游没
+/// 公开，所以别把它当画质/清晰度理解，它就是个入口要求的取值。
+const int _appVideoPlatform = 1024;
+
+/// 从批量取流响应里挑出**本次请求的那个 vid** 的 `video_model`。
+///
+/// 这个入口是批量的：每个 vid 的结果挂在 `data[vid]` 下，一条响应能装多集（本项目
+/// 一次只问一集）。这里**只认请求的那个 vid**——拿不到就返回 null 让
+/// [selectAppMedia] 报错，绝不退回「data 里唯一的那一项」：那可能是别的集的地址，
+/// 张冠李戴比报错糟得多（同 `media_web.dart` 对 `series_id` 的核对口径）。
+Map<String, dynamic>? _modelForVideo(
+  Map<String, dynamic>? result,
+  String videoId,
+) {
+  final entry = nestedMap(nestedMap(result, const ['data']), [videoId]);
+  final model = entry?['video_model'];
+  if (model is Map<String, dynamic>) return model;
+  return model is String ? decodeJsonObject(model) : null;
+}
+
 /// 取流相关的客户端方法。对照 Go `hongguo/media.go` 里挂在 `Client` 上的那几个。
 extension HongguoMediaApi on HongguoClient {
   /// App 单路取流。对照 Go 的 `Client.ResolveAppMedia`。
   ///
-  /// 网页与备用兜底是阶段 2 的事，见 `docs/plan.md`。
+  /// 网页与备用兜底在 `media_web.dart` 的 `resolveMedia` 里，不在这里。
   Future<Media> resolveAppMedia(String videoId) async {
     if (!numericIdPattern.hasMatch(videoId)) {
       throw HongguoRequestException('红果视频 ID 无效');
     }
     final result = await appRequest(
       method: 'POST',
-      path: '/novel/player/video_model/v1/',
+      path: _appVideoModelPath,
       payload: {
-        'video_id': videoId,
-        'content_type': 1,
-        'biz_param': {'need_all_video_definition': true, 'video_platform': 3},
+        'biz_param': {
+          'detail_page_version': 0,
+          'device_level': 3,
+          'disable_digg_stat': false,
+          'need_all_video_definition': true,
+          'need_mp4_align': false,
+          'use_os_player': false,
+          'use_server_dns': false,
+          'video_platform': _appVideoPlatform,
+        },
+        'mixed_video_id_map': {
+          _mixedVideoContentType: [videoId],
+        },
       },
     );
-    final data = nestedMap(result, const ['data']) ?? const <String, dynamic>{};
-    var model = data['video_model'];
-    if (model is String) model = decodeJsonObject(model);
-    return selectAppMedia(model is Map<String, dynamic> ? model : null);
+    return selectAppMedia(_modelForVideo(result, videoId));
   }
 }
